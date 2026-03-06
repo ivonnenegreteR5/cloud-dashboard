@@ -1,8 +1,9 @@
 //components/idlinens/MovimientosDiariosDashboard.tsx
+// components/idlinens/MovimientosDiariosDashboard.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
 import {
   ResponsiveContainer,
   BarChart,
@@ -13,10 +14,7 @@ import {
   CartesianGrid,
   Legend,
 } from "recharts";
-import {
-  fetchMovimientosResumenDiario,
-  type MovResumenDia,
-} from "@/components/idlinens/api";
+import { fetchMovimientosResumenDiario, type MovResumenDia } from "@/components/idlinens/api";
 
 function cx(...classes: Array<string | false | undefined | null>) {
   return classes.filter(Boolean).join(" ");
@@ -29,8 +27,33 @@ function fmtDia(dia: string) {
   return `${d}/${m}/${y}`;
 }
 
+/**
+ * Construye SIEMPRE: /{tenant}/idlinens/mov/dia?dia=YYYY-MM-DD
+ * aunque el dashboard se renderice en /{tenant}/idlinens o /{tenant}/idlinens/mov
+ */
+function buildMovDiaHref(pathname: string, dia: string) {
+  const clean = String(pathname || "").replace(/\/$/, "");
+  const qs = `dia=${encodeURIComponent(dia)}`;
+
+  // Si ya estás dentro de /idlinens/mov
+  if (/\/idlinens\/mov$/.test(clean)) {
+    return `${clean}/dia?${qs}`;
+  }
+
+  // Si estás en /idlinens (u otra subruta), fuerza /idlinens/mov/dia
+  const idx = clean.indexOf("/idlinens");
+  if (idx >= 0) {
+    const base = clean.slice(0, idx) + "/idlinens/mov";
+    return `${base}/dia?${qs}`;
+  }
+
+  // Fallback: por si algún día cambia el layout
+  return `/idlinens/mov/dia?${qs}`;
+}
+
 export default function MovimientosDiariosDashboard({ tenantId }: { tenantId: string }) {
   const router = useRouter();
+  const pathname = usePathname();
 
   const [days] = useState(7);
   const [loading, setLoading] = useState(true);
@@ -114,11 +137,7 @@ export default function MovimientosDiariosDashboard({ tenantId }: { tenantId: st
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={chartData} margin={{ top: 10, right: 10, left: 0, bottom: 20 }}>
                   <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis
-                    dataKey="dia"
-                    tickFormatter={(v) => fmtDia(String(v))}
-                    tick={{ fontSize: 11 }}
-                  />
+                  <XAxis dataKey="dia" tickFormatter={(v) => fmtDia(String(v))} tick={{ fontSize: 11 }} />
                   <YAxis />
                   <Tooltip
                     formatter={(value: any, name: any) => [Number(value || 0), String(name)]}
@@ -155,8 +174,8 @@ export default function MovimientosDiariosDashboard({ tenantId }: { tenantId: st
                     "flex items-center justify-between gap-3"
                   )}
                   onClick={() => {
-                    // ✅ si estás en /idlinens/mov, esto navega a /idlinens/mov/dia?dia=...
-                    router.push(`./dia?dia=${encodeURIComponent(r.dia)}`);
+                    const href = buildMovDiaHref(pathname, r.dia);
+                    router.push(href);
                   }}
                 >
                   <div>
@@ -172,9 +191,7 @@ export default function MovimientosDiariosDashboard({ tenantId }: { tenantId: st
                 </button>
               ))}
 
-              {!data.length && (
-                <div className="p-6 text-sm text-neutral-600">Sin movimientos.</div>
-              )}
+              {!data.length && <div className="p-6 text-sm text-neutral-600">Sin movimientos.</div>}
             </div>
           )}
         </div>

@@ -402,6 +402,54 @@ export async function listAssetsWithSession(
 }
 
 /**
+ * 🔍 Búsqueda avanzada de assets con filtros reales en el servidor
+ * POST {{BASE_URL}}/api/cloud/assets/search
+ * 
+ * ✅ Esta función es la CLAVE para que los filtros funcionen correctamente
+ */
+export async function searchAssetsWithSession(
+  sessionToken: string,
+  filters: Record<string, string>,
+  limit = 100,
+  skip = 0,
+  authHeader?: string,
+  tenantIdHint?: string
+) {
+  if (!sessionToken) throw new Error("sessionToken requerido");
+
+  const url = `${BASE_URL}/api/cloud/assets/search?limit=${limit}&skip=${skip}`;
+
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    'x-session-token': sessionToken,
+  };
+  
+  if (authHeader) headers['Authorization'] = authHeader;
+  if (tenantIdHint) headers['x-tenant-id'] = tenantIdHint;
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ filters }),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text().catch(() => '');
+    throw new Error(`Error en búsqueda: ${response.status} - ${errorText}`);
+  }
+
+  const data = await response.json();
+  
+  return {
+    assets: data.assets || [],
+    total: data.total || 0,
+    limit: data.limit || limit,
+    skip: data.skip || skip,
+    hasMore: data.hasMore || false
+  };
+}
+
+/**
  * 🗑️ Borrar assets por ids usando SessionToken + tenant
  * POST {{BASE_URL}}/api/v1/{tenant}/Assets/Delete
  *
@@ -418,7 +466,8 @@ export async function deleteAssetsWithSession(
   if (!sessionToken) throw new Error("sessionToken requerido");
   if (!ids || ids.length === 0) throw new Error("Lista de ids vacía");
 
-  const url = `${BASE_URL}/api/v1/${tenantId}/Assets/Delete`;
+  // ✅ endpoint global
+  const url = `${BASE_URL}/api/v1/Assets/Delete`;
 
   const body = {
     auth: { token: sessionToken },
@@ -430,14 +479,11 @@ export async function deleteAssetsWithSession(
 
   return fetchJson(
     url,
-    {
-      method: "POST",
-      headers,
-      body: JSON.stringify(body),
-    },
+    { method: "POST", headers, body: JSON.stringify(body) },
     tenantIdHint || tenantId
   );
 }
+
 
 /**
  * ✏️ Actualizar assets usando SessionToken + tenant
@@ -456,7 +502,8 @@ export async function updateAssetsWithSession(
   if (!sessionToken) throw new Error("sessionToken requerido");
   if (!items || items.length === 0) throw new Error("items[] requerido");
 
-  const url = `${BASE_URL}/api/v1/${tenantId}/Assets/Update`;
+  // ✅ CAMBIO CLAVE: endpoint global (sin tenant en path)
+  const url = `${BASE_URL}/api/v1/Assets/Update`;
 
   const body = {
     auth: { token: sessionToken },
@@ -466,6 +513,7 @@ export async function updateAssetsWithSession(
   const headers: Record<string, string> = {};
   if (authHeader) headers.Authorization = authHeader;
 
+  // ✅ tenant SIEMPRE por header (superadmin o normal)
   return fetchJson(
     url,
     {
@@ -476,6 +524,7 @@ export async function updateAssetsWithSession(
     tenantIdHint || tenantId
   );
 }
+
 
 /**
  * 📍 Listar locations usando SessionToken + tenant

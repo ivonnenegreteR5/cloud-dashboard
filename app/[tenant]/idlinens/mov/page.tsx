@@ -1,3 +1,5 @@
+//app/[tenant]/idlinens/mov/page.tsx
+
 "use client";
 
 import React from "react";
@@ -14,3 +16,4 @@ export default function MovimientosDiariosPage() {
     </IdLinensShell>
   );
 }
+

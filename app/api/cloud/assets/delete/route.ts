@@ -1,119 +1,112 @@
 // app/api/cloud/assets/delete/route.ts
 import { NextResponse } from "next/server";
 
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 const BASE_URL =
   process.env.CLOUD_API_BASE_URL ||
   process.env.NEXT_PUBLIC_CLOUD_API_BASE_URL ||
   "https://cloudapi-prod-9metrcu7.uc.gateway.dev";
 
-// ✅ acepta cualquiera de las dos (para no romper lo ya funcional)
-const API_KEY = process.env.CLOUD_API_API_KEY || process.env.CLOUD_API_KEY || "";
+const API_KEY =
+  process.env.CLOUD_API_API_KEY ||
+  process.env.CLOUD_API_KEY ||
+  process.env.NEXT_PUBLIC_CLOUD_API_KEY ||
+  "";
+
+function withNoStore(res: NextResponse) {
+  res.headers.set(
+    "Cache-Control",
+    "no-store, no-cache, must-revalidate, proxy-revalidate"
+  );
+  res.headers.set("Pragma", "no-cache");
+  res.headers.set("Expires", "0");
+  res.headers.set("Surrogate-Control", "no-store");
+  return res;
+}
 
 export async function POST(req: Request) {
   try {
     const headers = new Headers(req.headers);
+    const sessionToken = headers.get("x-session-token") || "";
+    const authHeader = headers.get("authorization") || "";
+    const tenantId = headers.get("x-tenant-id") || "";
 
-    const sessionToken = headers.get("x-session-token");
-    const authHeader = headers.get("authorization") || undefined;
-
-    // ✅ tenant (viene desde tu pantalla como x-tenant-id)
-    const tenantIdRaw = headers.get("x-tenant-id") || "";
-    const tenantId = tenantIdRaw.trim();
-
-    if (!sessionToken) {
-      return NextResponse.json(
-        { ok: false, error: "Falta x-session-token" },
-        { status: 401 }
+    if (!tenantId) {
+      return withNoStore(
+        NextResponse.json({ ok: false, error: "Falta x-tenant-id" }, { status: 400 })
       );
     }
-
-    if (!API_KEY) {
-      return NextResponse.json(
-        {
-          ok: false,
-          error:
-            "Falta CLOUD_API_API_KEY o CLOUD_API_KEY en variables de entorno (.env.local)",
-        },
-        { status: 500 }
+    if (!sessionToken) {
+      return withNoStore(
+        NextResponse.json({ ok: false, error: "Falta x-session-token" }, { status: 401 })
+      );
+    }
+    if (!authHeader) {
+      return withNoStore(
+        NextResponse.json({ ok: false, error: "Falta Authorization Bearer (idToken)" }, { status: 401 })
       );
     }
 
     const body = await req.json().catch(() => ({}));
-    const ids = (body?.ids || []) as string[];
-
-    if (!Array.isArray(ids) || ids.length === 0) {
-      return NextResponse.json(
-        { ok: false, error: "ids[] requerido" },
-        { status: 400 }
+    const ids: string[] = Array.isArray(body?.ids) ? body.ids : [];
+    const clean = ids.map((x) => String(x || "").trim()).filter(Boolean);
+    if (clean.length === 0) {
+      return withNoStore(
+        NextResponse.json({ ok: false, error: "ids[] requerido" }, { status: 400 })
       );
     }
 
-    // 🟣 Body como tu REST
-    const cloudBody = {
+    const url = `${BASE_URL}/api/v1/${encodeURIComponent(
+      tenantId
+    )}/Assets/Delete`;
+
+    const payload = {
       auth: { token: sessionToken },
-      items: ids.map((id) => ({ _id: String(id) })),
+      items: clean.map((_id) => ({ _id })),
     };
 
-    // ✅ Preferimos endpoint por tenant. Si no viene tenant, usamos el global por compatibilidad.
-    const endpoint = tenantId
-      ? `${BASE_URL}/api/v1/${encodeURIComponent(tenantId)}/Assets/Delete`
-      : `${BASE_URL}/api/v1/Assets/Delete`;
-
-    const cloudResp = await fetch(endpoint, {
+    const resp = await fetch(url, {
       method: "POST",
+      cache: "no-store",
       headers: {
         "Content-Type": "application/json",
-        "x-api-key": API_KEY,
-        ...(authHeader ? { Authorization: authHeader } : {}),
+        Authorization: authHeader,
+        ...(API_KEY ? { "x-api-key": API_KEY } : {}),
       },
-      body: JSON.stringify(cloudBody),
+      body: JSON.stringify(payload),
     });
 
-    const text = await cloudResp.text();
-    let json: any = null;
-
+    const text = await resp.text();
+    let data: any;
     try {
-      json = text ? JSON.parse(text) : null;
+      data = text ? JSON.parse(text) : {};
     } catch {
-      // Si no es JSON:
-      if (!cloudResp.ok) {
-        return NextResponse.json(
-          {
-            ok: false,
-            error: "Error de la API externa",
-            status: cloudResp.status,
-            endpoint,
-            raw: text || null,
-          },
-          { status: cloudResp.status }
-        );
-      }
+      data = { raw: text };
+    }
 
-      return NextResponse.json(
-        { ok: true, result: text, endpoint },
-        { status: 200 }
+    if (!resp.ok || (data?.status && data.status !== 0)) {
+      const msg =
+        data?.message ||
+        data?.error ||
+        `Error HTTP ${resp.status} al llamar Assets/Delete`;
+      return withNoStore(
+        NextResponse.json(
+          { ok: false, error: msg, status: resp.status, details: data },
+          { status: resp.status }
+        )
       );
     }
 
-    if (!cloudResp.ok) {
-      return NextResponse.json(
-        {
-          ok: false,
-          error: json?.message || json?.error || "Error de la API externa",
-          status: cloudResp.status,
-          endpoint,
-          raw: json,
-        },
-        { status: cloudResp.status }
-      );
-    }
-
-    return NextResponse.json({ ok: true, result: json, endpoint }, { status: 200 });
+    return withNoStore(NextResponse.json({ ok: true, data }, { status: 200 }));
   } catch (err: any) {
     console.error("POST /api/cloud/assets/delete error:", err);
-    return NextResponse.json(
-      { ok: false, error: err?.message || "Error interno borrando assets" },
-      { status: 500 }
+    return withNoStore(
+      NextResponse.json(
+        { ok: false, error: err?.message || "Error eliminando asset" },
+        { status: 500 }
+      )
     );
   }
 }

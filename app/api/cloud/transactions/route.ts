@@ -52,7 +52,7 @@ export async function GET(req: Request) {
     const urlIn = new URL(req.url);
 
     // ✅ parámetros (sin romper nada)
-    const limit = (urlIn.searchParams.get("limit") ?? "500").trim();
+    const limit = (urlIn.searchParams.get("limit") ?? "1000").trim();
     const assetId = (urlIn.searchParams.get("assetId") || "").trim();
     const tag = (urlIn.searchParams.get("tag") || "").trim();
 
@@ -62,9 +62,12 @@ export async function GET(req: Request) {
     urlOut.searchParams.set("limit", limit);
 
     // ✅ Filtros opcionales
-    if (assetId) urlOut.searchParams.set("assetId", assetId);
-    if (tag) urlOut.searchParams.set("tag", tag);
+if (assetId) urlOut.searchParams.set("assetId", assetId);
+if (tag) urlOut.searchParams.set("tag", tag);
 
+// 👇 NUEVO: filtro por ubicación
+const locationId = urlIn.searchParams.get("locationId")?.trim() || "";
+if (locationId) urlOut.searchParams.set("locationId", locationId);
     // ✅ FIX: si viene tenant, lo mandamos también por query (compat con backends)
     if (tenantId) urlOut.searchParams.set("tenantId", tenantId);
 
@@ -118,7 +121,12 @@ export async function GET(req: Request) {
       ? json.data
       : [];
 
-    return NextResponse.json({ ok: true, transactions }, { status: 200 });
+    return NextResponse.json({ 
+  ok: true, 
+  transactions,
+  total: transactions.length  // 👈 AGREGAR ESTO
+}, { status: 200 });
+
   } catch (err: any) {
     console.error("GET /api/cloud/transactions error:", err);
     return NextResponse.json(

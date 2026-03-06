@@ -93,7 +93,7 @@ export async function POST(req: NextRequest) {
       data = text;
     }
 
-    if (!upstream.ok) {
+    if (!upstream.ok) { 
       return NextResponse.json(
         {
           status: upstream.status,

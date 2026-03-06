@@ -1,4 +1,5 @@
 // components/idlinens/idlinens-shell.tsx
+// components/idlinens/idlinens-shell.tsx
 "use client";
 
 import { ArrowLeft } from "lucide-react";
@@ -9,7 +10,6 @@ import {
   Menu,
   Search,
   PieChart,
-  ClipboardList,
   Repeat,
   Package,
   Clock4,
@@ -84,7 +84,15 @@ export function IdLinensShell({
   const router = useRouter();
   const pathname = usePathname();
 
-  const safeTenant = (tenantId || "demo").trim();
+  // ✅ FIX: tenant robusto (si tenantId viene vacío, lo toma de la URL)
+  const safeTenant = useMemo(() => {
+    const fromProp = String(tenantId || "").trim();
+    if (fromProp) return fromProp;
+
+    const path = String(pathname || "");
+    const seg = path.split("/").filter(Boolean)[0]; // primer segmento
+    return (seg || "demo").trim();
+  }, [tenantId, pathname]);
 
   // ✅ Branding reactivo (para que al entrar desde superadmin se pinte)
   const [branding, setBranding] = useState<BrandingState>(() =>
@@ -143,10 +151,10 @@ export function IdLinensShell({
         href: `${base}/mov`,
       },
       {
-        key: "inactive",
+        key: "inactivos15",
         label: "Prendas con 15 o más días sin actividad",
         icon: <Clock4 className="h-6 w-6" />,
-        href: `${base}/inactive`,
+        href: `${base}/inactivos15`,
       },
       {
         key: "analysis",
@@ -155,16 +163,10 @@ export function IdLinensShell({
         href: `${base}/analysis`,
       },
       {
-        key: "retiros",
+        key: "retirados",
         label: "Retirados de Inventario",
         icon: <ChevronRight className="h-6 w-6" />,
-        href: `${base}/retiros`,
-      },
-      {
-        key: "list",
-        label: "Listado total de prendas",
-        icon: <ClipboardList className="h-6 w-6" />,
-        href: `${base}/list`,
+        href: `${base}/retirados`,
       },
     ],
     [base]
@@ -427,27 +429,26 @@ export function IdLinensShell({
         </aside>
 
         {/* MAIN */}
-       <main className="w-full py-2">
-  {/* ✅ que use todo el ancho disponible */}
-  <div className="w-full">
-    {/* ✅ título con padding pero contenido al ras */}
-    <div className="px-4 md:px-6 mb-4">
-      <div className="text-lg font-semibold">{activeLabel}</div>
-    </div>
+        <main className="w-full py-2">
+          {/* ✅ que use todo el ancho disponible */}
+          <div className="w-full">
+            {/* ✅ título con padding pero contenido al ras */}
+            <div className="px-4 md:px-6 mb-4">
+              <div className="text-lg font-semibold">{activeLabel}</div>
+            </div>
 
-    {!canUseIdlinens ? (
-      <div className="px-4 md:px-6">
-        <div className="rounded-xl border bg-white p-4 text-sm text-neutral-700">
-          Este tenant no tiene habilitada la app <b>IDLinens</b>.
-        </div>
-      </div>
-    ) : (
-      // ✅ children sin max-width ni padding extra
-      <div className="w-full">{children}</div>
-    )}
-  </div>
-</main>
-
+            {!canUseIdlinens ? (
+              <div className="px-4 md:px-6">
+                <div className="rounded-xl border bg-white p-4 text-sm text-neutral-700">
+                  Este tenant no tiene habilitada la app <b>IDLinens</b>.
+                </div>
+              </div>
+            ) : (
+              // ✅ children sin max-width ni padding extra
+              <div className="w-full">{children}</div>
+            )}
+          </div>
+        </main>
       </div>
     </div>
   );

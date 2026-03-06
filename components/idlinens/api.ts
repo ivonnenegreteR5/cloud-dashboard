@@ -1,5 +1,4 @@
 // components/idlinens/api.ts
-
 export type EstadoKey = "circulacion" | "lavanderia" | "nuevos";
 
 export type EstadoResumen = {
@@ -29,14 +28,116 @@ export type DetalleRow = {
   empleado: string;
 };
 
+/** ===========================
+ *  ✅ INACTIVOS 15+ DÍAS
+ *  =========================== */
+export type Inactivos15TipoResumen = {
+  key: string; // canon
+  tipo: string; // display con ñ/acentos
+  count: number;
+  rawTipo?: string; // para consultas
+};
+
+export type Inactivos15DetalleRow = {
+  tipo: string;
+  _id: string;
+  tag?: string;
+  estado?: string;
+  vistoUltimaVez: string;
+  creado: string;
+  ciclosLavado: number;
+  antiguedadDias: number;
+  diasLavanderia: number;
+  ubicacion?: string;
+  empleado: string;
+
+  // extras opcionales (si tu API los manda)
+  daysInactive?: number;
+  lastMovementAt?: string;
+};
+
+/** ===========================
+ *  ✅ ANÁLISIS DE PRENDAS (rápido con routes)
+ *  =========================== */
+export type AnalysisCyclesByType = { tipo: string; totalCycles: number };
+export type AnalysisAgeByWeek = { week: number; count: number };
+export type AnalysisInactiveByType = { tipo: string; count: number };
+
+export type AnalysisSummary = {
+  cyclesByType: AnalysisCyclesByType[];
+  ageByWeek: AnalysisAgeByWeek[];
+  inactiveByType: AnalysisInactiveByType[];
+  meta?: {
+    scanned?: number;
+    scannedRaw?: number;
+    truncated?: boolean;
+    cacheHit?: boolean;
+    ttlSeconds?: number;
+    maxScan?: number;
+    pageSize?: number;
+  };
+};
+
+// ✅ AJUSTE: incluye ageTipo
+export type AnalysisDetailMode = "cycles" | "age" | "inactive" | "ageTipo";
+
+export type AnalysisDetailItem = {
+  _id?: string;
+  tag?: string;
+  tipo?: string;
+  status?: string;
+  location?: string;
+  createdAtMs?: number | null;
+  ciclosLavado?: number;
+};
+
+export type AnalysisDetailResponse = {
+  items: AnalysisDetailItem[];
+  total: number;
+  limit: number;
+  skip: number;
+  meta?: any;
+};
+
+export type RetiradosDetailResponse<TItem = any> = {
+  items: TItem[];
+  total: number;
+  limit: number;
+  skip: number;
+  meta?: any;
+};
+
 /** ---------------------------
  *  🔐 TOKENS (de tu login)
  *  --------------------------*/
 function getAuthTokens() {
   if (typeof window === "undefined") return { sessionToken: "", idToken: "" };
+
   const sessionToken = (localStorage.getItem("cloudSessionToken") || "").trim();
-  const idToken = (localStorage.getItem("cloudIdToken") || "").trim();
+
+  // ✅ JWT Firebase (Gateway). Si lo guardas con otro key, agrega OR aquí.
+  const idToken =
+    (localStorage.getItem("cloudIdToken") || "").trim() ||
+    (localStorage.getItem("firebaseIdToken") || "").trim() ||
+    (localStorage.getItem("cloudFirebaseIdToken") || "").trim();
+
   return { sessionToken, idToken };
+}
+
+/** ---------------------------
+ *  ✅ Headers estándar para TODOS los fetch
+ *  (Authorization Bearer + x-tenant-id)
+ *  --------------------------*/
+function buildHeaders(tenantId: string) {
+  const { idToken } = getAuthTokens();
+
+  const h: Record<string, string> = {
+    "Content-Type": "application/json",
+    "x-tenant-id": String(tenantId || "").trim(),
+  };
+
+  if (idToken) h["Authorization"] = `Bearer ${idToken}`;
+  return h;
 }
 
 /** ---------------------------
@@ -77,6 +178,13 @@ type RawAsset = {
   empleado?: string;
   employee?: string;
 
+  // extras opcionales
+  daysInactive?: number;
+  lastMovementAt?: string | number;
+
+    // ✅ tu data real (captura)
+  Created?: string | number;   // epoch seconds
+
   [k: string]: any;
 };
 
@@ -89,18 +197,14 @@ type AssetsPage = { items: RawAsset[]; total?: number };
 const _assetsCacheByKey = new Map<string, { ts: number; items: RawAsset[] }>();
 const _inflightByKey = new Map<string, Promise<RawAsset[]>>();
 
-/**
- * ✅ AJUSTE (sin romper nada): el cache key ahora incluye tenantId
- * para evitar que un tenant “contamine” el cache de otro.
- */
 function makeCacheKey(tenantId: string, filter: Record<string, any>) {
-  return JSON.stringify({ tenantId: String(tenantId || "").trim(), filter: filter || {} });
+  return JSON.stringify({
+    tenantId: String(tenantId || "").trim(),
+    filter: filter || {},
+  });
 }
 
-async function getAllAssetsCached(
-  tenantId: string,
-  filter: Record<string, any> = {}
-) {
+async function getAllAssetsCached(tenantId: string, filter: Record<string, any> = {}) {
   const TTL_MS = 15_000;
   const now = Date.now();
   const key = makeCacheKey(tenantId, filter);
@@ -138,15 +242,13 @@ async function postAssetsPage(
   skip = 0
 ): Promise<AssetsPage> {
   const { sessionToken, idToken } = getAuthTokens();
-  if (!sessionToken)
-    throw new Error("No hay sessionToken (cloudSessionToken) en localStorage");
+  if (!sessionToken) throw new Error("No hay sessionToken (cloudSessionToken) en localStorage");
+
+  const headers = buildHeaders(tenantId);
 
   const resp = await fetch("/api/idlinens/assets", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-tenant-id": tenantId,
-    },
+    headers,
     credentials: "include",
     body: JSON.stringify({ sessionToken, idToken, filter, limit, skip }),
     cache: "no-store",
@@ -160,14 +262,12 @@ async function postAssetsPage(
     data = [];
   }
 
-  if (!resp.ok)
-    throw new Error(`Assets proxy error (${resp.status}): ${txt || "sin detalle"}`);
+  if (!resp.ok) throw new Error(`Assets proxy error (${resp.status}): ${txt || "sin detalle"}`);
 
   if (Array.isArray(data)) return { items: data, total: undefined };
 
   const items = Array.isArray((data as any).items) ? (data as any).items : [];
-  const total =
-    typeof (data as any).total === "number" ? (data as any).total : undefined;
+  const total = typeof (data as any).total === "number" ? (data as any).total : undefined;
   return { items, total };
 }
 
@@ -208,15 +308,13 @@ async function postAssetsAll(
  *  --------------------------*/
 async function postStats<T>(tenantId: string, path: string, body: any): Promise<T> {
   const { sessionToken, idToken } = getAuthTokens();
-  if (!sessionToken)
-    throw new Error("No hay sessionToken (cloudSessionToken) en localStorage");
+  if (!sessionToken) throw new Error("No hay sessionToken (cloudSessionToken) en localStorage");
+
+  const headers = buildHeaders(tenantId);
 
   const resp = await fetch(path, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-tenant-id": tenantId,
-    },
+    headers,
     credentials: "include",
     body: JSON.stringify({ sessionToken, idToken, ...body }),
     cache: "no-store",
@@ -230,11 +328,188 @@ async function postStats<T>(tenantId: string, path: string, body: any): Promise<
     data = txt;
   }
 
-  if (!resp.ok)
-    throw new Error(`Stats proxy error (${resp.status}): ${txt || "sin detalle"}`);
+  if (!resp.ok) throw new Error(`Stats proxy error (${resp.status}): ${txt || "sin detalle"}`);
   return data as T;
 }
 
+/** ✅ unwrap para respuestas {ok:true}/{ok:false} */
+function unwrapOk<T>(data: any): T {
+  if (data && typeof data === "object" && "ok" in data) {
+    if ((data as any).ok) return data as T;
+    const msg = String((data as any).error || (data as any).message || "Error");
+    throw new Error(msg);
+  }
+  return data as T;
+}
+
+/** ===========================
+ *  ✅ ANÁLISIS DE PRENDAS (rápido)
+ *  Usa:
+ *   - POST /api/idlinens/analysis
+ *   - POST /api/idlinens/analysis/detail
+ *  =========================== */
+export async function fetchAnalysisSummary(
+  tenantId: string,
+  opts?: { ttlSeconds?: number; maxScan?: number; pageSize?: number }
+): Promise<AnalysisSummary> {
+  const data = await postStats<any>(tenantId, "/api/idlinens/analysis", {
+    ttlSeconds: opts?.ttlSeconds ?? 60,
+    maxScan: opts?.maxScan ?? 50000,
+    pageSize: opts?.pageSize ?? 1000,
+  });
+
+  const unwrapped = unwrapOk<any>(data);
+
+  return {
+    cyclesByType: Array.isArray(unwrapped?.cyclesByType) ? unwrapped.cyclesByType : [],
+    ageByWeek: Array.isArray(unwrapped?.ageByWeek) ? unwrapped.ageByWeek : [],
+    inactiveByType: Array.isArray(unwrapped?.inactiveByType) ? unwrapped.inactiveByType : [],
+    meta: unwrapped?.meta,
+  };
+}
+
+export async function fetchAnalysisDetail(
+  tenantId: string,
+  params: {
+    mode: AnalysisDetailMode;
+    tipo?: string;
+    week?: number;
+    limit?: number;
+    skip?: number;
+
+    // ✅ opcionales: para que detail pueda “auto-hidratar” cache
+    // si tu server los usa (no rompe si los ignora)
+    ttlSeconds?: number;
+    maxScan?: number;
+    pageSize?: number;
+  }
+): Promise<AnalysisDetailResponse> {
+  const data = await postStats<any>(tenantId, "/api/idlinens/analysis/detail", {
+    mode: params.mode,
+    tipo: params.tipo,
+    week: params.week,
+    limit: params.limit ?? 100,
+    skip: params.skip ?? 0,
+
+    ttlSeconds: params.ttlSeconds,
+    maxScan: params.maxScan,
+    pageSize: params.pageSize,
+  });
+
+  const unwrapped = unwrapOk<any>(data);
+
+  return {
+    items: Array.isArray(unwrapped?.items) ? unwrapped.items : [],
+    total: Number(unwrapped?.total ?? 0),
+    limit: Number(unwrapped?.limit ?? params.limit ?? 100),
+    skip: Number(unwrapped?.skip ?? params.skip ?? 0),
+    meta: unwrapped?.meta,
+  };
+}
+
+// ===========================
+// ✅ RETIRADOS (Blancos Retirados)
+// ===========================
+export type RetiradosSummary = {
+  totalesByType: Array<{ tipo: string; count: number }>;
+  avgAgeWeeksByType: Array<{ tipo: string; avgWeeks: number; count: number }>;
+  avgCyclesByType: Array<{ tipo: string; avgCycles: number; count: number }>;
+  ageByWeek: Array<{ week: number; count: number }>;
+  meta?: any;
+  debug?: any;
+};
+
+export type RetiradosDetailMode =
+  | "tipo"          // lista por tipo
+  | "cyclesTipo"    // lista por tipo ordenada por ciclos (server)
+  | "ageWeekTipos"  // resumen: tipos dentro de una semana (conteos)
+  | "ageWeekTipo";  // lista: items dentro de semana + tipo
+
+export async function fetchRetiradosSummary(
+  tenantId: string,
+  opts?: { ttlSeconds?: number; maxScan?: number; pageSize?: number }
+): Promise<RetiradosSummary> {
+  const data = await postStats<any>(tenantId, "/api/idlinens/retirados/analysis", {
+    ttlSeconds: opts?.ttlSeconds ?? 60,
+    maxScan: opts?.maxScan ?? 50000,
+    pageSize: opts?.pageSize ?? 1000,
+  });
+
+  const u = unwrapOk<any>(data);
+
+  return {
+    totalesByType: Array.isArray(u?.totalesByType) ? u.totalesByType : [],
+    avgAgeWeeksByType: Array.isArray(u?.avgAgeWeeksByType) ? u.avgAgeWeeksByType : [],
+    avgCyclesByType: Array.isArray(u?.avgCyclesByType) ? u.avgCyclesByType : [],
+    ageByWeek: Array.isArray(u?.ageByWeek) ? u.ageByWeek : [],
+    meta: u?.meta,
+    debug: u?.debug,
+  };
+}
+
+export async function fetchRetiradosDetail<TItem = any>(
+  tenantId: string,
+  params: {
+    mode: RetiradosDetailMode;
+    tipo?: string;
+    week?: number;
+    limit?: number;
+    skip?: number;
+    ttlSeconds?: number;
+    maxScan?: number;
+    pageSize?: number; // scan page size (server)
+  }
+): Promise<RetiradosDetailResponse<TItem>> {
+  const data = await postStats<any>(tenantId, "/api/idlinens/retirados/analysis/details", {
+    ...params,
+    limit: params.limit ?? 100,
+    skip: params.skip ?? 0,
+  });
+
+  const u = unwrapOk<any>(data);
+
+  return {
+    items: Array.isArray(u?.items) ? (u.items as TItem[]) : [],
+    total: Number(u?.total ?? 0),
+    limit: Number(u?.limit ?? (params.limit ?? 100)),
+    skip: Number(u?.skip ?? (params.skip ?? 0)),
+    meta: u?.meta,
+  };
+}
+/** ✅ Acción: retirar (mover a Blancos Retirados) */
+export async function retireAssetToRetirados(tenantId: string, tag: string) {
+  const { sessionToken, idToken } = getAuthTokens();
+  if (!sessionToken) throw new Error("No hay sessionToken (cloudSessionToken) en localStorage");
+
+  const headers = buildHeaders(tenantId);
+
+  const resp = await fetch("/api/cloud/assets/update", {
+    method: "POST",
+    headers,
+    credentials: "include",
+    body: JSON.stringify({
+      sessionToken,
+      idToken,
+      items: [{ tag: String(tag || "").trim(), locationId: "Blancos Retirados" }],
+    }),
+    cache: "no-store",
+  });
+
+  const txt = await resp.text().catch(() => "");
+  let data: any = null;
+  try {
+    data = txt ? JSON.parse(txt) : null;
+  } catch {
+    data = txt;
+  }
+
+  if (!resp.ok) throw new Error(`Update error (${resp.status}): ${txt || "sin detalle"}`);
+  return data;
+}
+
+/** ---------------------------
+ *  Detalle page (resumen / tablas existentes)
+ *  --------------------------*/
 type DetallePageResp = {
   total?: number;
   limit?: number;
@@ -249,11 +524,12 @@ async function postDetallePage(params: {
   limit?: number;
   skip?: number;
 }): Promise<{ items: RawAsset[]; total: number; limit: number; skip: number }> {
-  const r = await postStats<DetallePageResp>(
-    params.tenantId,
-    "/api/idlinens/detalle-page",
-    { estado: params.estado, tipo: params.tipo, limit: params.limit, skip: params.skip }
-  );
+  const r = await postStats<DetallePageResp>(params.tenantId, "/api/idlinens/detalle-page", {
+    estado: params.estado,
+    tipo: params.tipo,
+    limit: params.limit,
+    skip: params.skip,
+  });
 
   const items = Array.isArray((r as any)?.items) ? ((r as any).items as RawAsset[]) : [];
   const total = typeof (r as any)?.total === "number" ? (r as any).total : items.length;
@@ -287,12 +563,12 @@ function canonTipo(v: any) {
   return compact.toUpperCase();
 }
 
-/** ✅ Opcional bonito: MAYÚSCULAS conservando Ñ/acentos */
+/** ✅ MAYÚSCULAS conservando Ñ/acentos */
 function upperKeepAccents(s: string) {
   return String(s ?? "").trim().toLocaleUpperCase("es-MX");
 }
 
-/** ✅ Agrega + suma, PERO conserva display con Ñ/acentos */
+/** ✅ Agrega + suma, conserva display */
 function aggregateTipos(items: Array<{ tipo: string; count: number }>): TipoResumen[] {
   const map = new Map<string, { count: number; display: string; rawTipo: string }>();
 
@@ -316,14 +592,13 @@ function aggregateTipos(items: Array<{ tipo: string; count: number }>): TipoResu
   return Array.from(map.entries())
     .map(([key, v]) => ({
       key,
-      tipo: v.display, // ✅ aquí se pinta con Ñ/acentos
+      tipo: v.display,
       count: v.count,
-      rawTipo: v.rawTipo, // ✅ para consultas
+      rawTipo: v.rawTipo,
     }))
     .sort((a, b) => b.count - a.count);
 }
 
-/** ✅ resuelve display/canon -> raw (para que DetallePage NO regrese 0) */
 function resolveTipoForQuery(tipo: string, tipos?: TipoResumen[]) {
   const t = String(tipo ?? "").trim();
   if (!t) return t;
@@ -333,15 +608,9 @@ function resolveTipoForQuery(tipo: string, tipos?: TipoResumen[]) {
   return found?.rawTipo?.trim() || t;
 }
 
-/** ✅ AQUÍ ESTÁ EL CAMBIO IMPORTANTE: ya NO canonizamos en tablas */
 function toTipo(a: RawAsset) {
   const raw = toStr(a.AssetType) || toStr(a.type) || toStr(a.tipo) || "SIN_TIPO";
-
-  // Si quieres MAYÚSCULAS con Ñ: deja la siguiente línea
   return upperKeepAccents(raw) || "SIN_TIPO";
-
-  // Si lo quieres tal cual como viene de la API (respetando may/min):
-  // return raw || "SIN_TIPO";
 }
 
 function toTag(a: RawAsset) {
@@ -434,8 +703,11 @@ function toDetalleRow(a: RawAsset): DetalleRow {
  *  --------------------------*/
 export async function fetchResumenEstados(_tenantId: string): Promise<EstadoResumen[]> {
   const raw = await postStats<any>(_tenantId, "/api/idlinens/resumen-estados", {});
-  const items: Array<{ estado: EstadoKey; count?: number; label?: string }> =
-    Array.isArray(raw) ? raw : Array.isArray(raw?.items) ? raw.items : [];
+  const items: Array<{ estado: EstadoKey; count?: number; label?: string }> = Array.isArray(raw)
+    ? raw
+    : Array.isArray(raw?.items)
+      ? raw.items
+      : [];
 
   return items.map((d: any) => {
     const estado = String(d?.estado || "").toLowerCase() as EstadoKey;
@@ -450,14 +722,14 @@ export async function fetchResumenEstados(_tenantId: string): Promise<EstadoResu
 /** ---------------------------
  *  ✅ 2) Resumen por tipo dentro de un estado
  *  --------------------------*/
-export async function fetchResumenTipos(
-  _tenantId: string,
-  estado: EstadoKey
-): Promise<TipoResumen[]> {
+export async function fetchResumenTipos(_tenantId: string, estado: EstadoKey): Promise<TipoResumen[]> {
   const raw = await postStats<any>(_tenantId, "/api/idlinens/resumen-tipos", { estado });
 
-  const items: Array<{ tipo: string; count?: number }> =
-    Array.isArray(raw) ? raw : Array.isArray(raw?.items) ? raw.items : [];
+  const items: Array<{ tipo: string; count?: number }> = Array.isArray(raw)
+    ? raw
+    : Array.isArray(raw?.items)
+      ? raw.items
+      : [];
 
   return aggregateTipos(
     items.map((d: any) => ({
@@ -533,8 +805,11 @@ export async function fetchDetalle(
  *  --------------------------*/
 export async function fetchTotalesPorTipo(_tenantId: string): Promise<TipoResumen[]> {
   const raw = await postStats<any>(_tenantId, "/api/idlinens/totales-por-tipo", {});
-  const items: Array<{ tipo: string; count?: number }> =
-    Array.isArray(raw) ? raw : Array.isArray(raw?.items) ? raw.items : [];
+  const items: Array<{ tipo: string; count?: number }> = Array.isArray(raw)
+    ? raw
+    : Array.isArray(raw?.items)
+      ? raw.items
+      : [];
 
   return aggregateTipos(
     items.map((d: any) => ({
@@ -580,14 +855,12 @@ export async function fetchLavanderiaDetallePorTipo(
   tipo: string,
   tiposRef?: TipoResumen[]
 ): Promise<DetalleRow[]> {
-  // ✅ Ajuste “seguro”: resolvemos tipo canon->raw si nos pasan referencia,
-  // pero si no, se comporta igual que antes.
   const tipoQuery = resolveTipoForQuery(tipo, tiposRef);
   return fetchDetalle(_tenantId, "lavanderia", tipoQuery, tiposRef);
 }
 
 /** =========================================================
- *  ✅ 3ra FUNCIÓN: MOVIMIENTOS DIARIOS (NUEVO)
+ *  ✅ 3ra FUNCIÓN: MOVIMIENTOS DIARIOS
  *  ========================================================= */
 
 export type MovimientoEstado = "in" | "out" | "created";
@@ -621,21 +894,15 @@ export type MovimientoItem = {
 
 type MovResumenResp = { items?: any[] } | any[];
 
-/**
- * ✅ Resumen por día (últimos N días)
- * ⚠️ Ajusta SOLO el path si tu backend lo tiene distinto.
- */
 export async function fetchMovimientosResumenDiario(
   tenantId: string,
   opts?: { days?: number }
 ): Promise<MovResumenDia[]> {
   const days = Math.max(1, Math.min(60, Number(opts?.days ?? 7)));
 
-  const raw = await postStats<MovResumenResp>(
-    tenantId,
-    "/api/idlinens/movimientos-resumen-diario",
-    { days }
-  );
+  const raw = await postStats<MovResumenResp>(tenantId, "/api/idlinens/movimientos-resumen-diario", {
+    days,
+  });
 
   const items: any[] = Array.isArray(raw)
     ? raw
@@ -659,21 +926,17 @@ export async function fetchMovimientosResumenDiario(
 
 type MovDiaResp = { items?: any[]; total?: number; limit?: number; skip?: number };
 
-/**
- * ✅ Lista paginada de transacciones de un día
- * ⚠️ Ajusta SOLO el path si tu backend lo tiene distinto.
- */
 export async function fetchMovimientosDiaPage(
   tenantId: string,
-  dia: string, // YYYY-MM-DD
+  dia: string,
   limit = 50,
   skip = 0
 ): Promise<{ items: MovimientoItem[]; total: number; limit: number; skip: number }> {
-  const raw = await postStats<MovDiaResp>(
-    tenantId,
-    "/api/idlinens/movimientos-dia-page",
-    { dia, limit, skip }
-  );
+  const raw = await postStats<MovDiaResp>(tenantId, "/api/idlinens/movimientos-dia-page", {
+    dia,
+    limit,
+    skip,
+  });
 
   const items = Array.isArray((raw as any)?.items) ? (raw as any).items : [];
   const total = typeof (raw as any)?.total === "number" ? (raw as any).total : items.length;
@@ -691,20 +954,165 @@ export async function fetchMovimientosDiaPage(
   return { items: mapped, total, limit, skip };
 }
 
-/**
- * ✅ URL para descargar PDF de una transacción
- * ⚠️ Ajusta SOLO el path si tu backend lo tiene distinto.
- */
 export function buildMovimientoPdfUrl(tenantId: string, movimientoId: string) {
   const base = `/api/idlinens/movimientos-pdf`;
   const qs = new URLSearchParams({ id: movimientoId, tenantId });
   return `${base}?${qs.toString()}`;
 }
 
+/** =========================================================
+ *  ✅ INACTIVOS 15+ DÍAS
+ *  ========================================================= */
 
+type Inactivos15ResumenResp = { items?: Array<{ tipo: string; count?: number }> } | any[];
 
+type Inactivos15DetalleResp = {
+  total?: number;
+  limit?: number;
+  skip?: number;
+  items?: RawAsset[];
+};
 
+export async function fetchInactivos15ResumenTipos(
+  tenantId: string,
+  opts?: { estado?: EstadoKey | "todos" }
+): Promise<Inactivos15TipoResumen[]> {
+  const estado = (opts?.estado ?? "todos") as any;
+
+  const raw = await postStats<Inactivos15ResumenResp>(
+    tenantId,
+    "/api/idlinens/inactivos15/resumen-tipos",
+    { estado }
+  );
+
+  const items: Array<{ tipo: string; count?: number }> = Array.isArray(raw)
+    ? raw
+    : Array.isArray((raw as any)?.items)
+      ? (raw as any).items
+      : [];
+
+  const tipos = aggregateTipos(
+    items.map((d: any) => ({
+      tipo: String(d?.tipo ?? ""),
+      count: Number(d?.count || 0),
+    }))
+  );
+
+  return tipos.map((t) => ({
+    key: t.key,
+    tipo: t.tipo,
+    count: t.count,
+    rawTipo: t.rawTipo,
+  }));
+}
+
+export async function fetchInactivos15DetallePage(
+  tenantId: string,
+  params: {
+    estado?: EstadoKey | "todos";
+    tipo?: string;
+    limit?: number;
+    skip?: number;
+    tiposRef?: Inactivos15TipoResumen[];
+  }
+): Promise<{ rows: Inactivos15DetalleRow[]; total: number; limit: number; skip: number }> {
+  const estado = (params.estado ?? "todos") as any;
+  const limit = params.limit ?? 25;
+  const skip = params.skip ?? 0;
+
+  const tiposAsTipoResumen: TipoResumen[] = (params.tiposRef || []).map((t) => ({
+    key: t.key,
+    tipo: t.tipo,
+    count: t.count,
+    rawTipo: t.rawTipo,
+  }));
+
+  const tipoQuery = params.tipo ? resolveTipoForQuery(params.tipo, tiposAsTipoResumen) : "";
+
+  const raw = await postStats<Inactivos15DetalleResp>(
+    tenantId,
+    "/api/idlinens/inactivos15/detalle-page",
+    { estado, tipo: tipoQuery, limit, skip }
+  );
+
+  const items = Array.isArray((raw as any)?.items) ? ((raw as any).items as RawAsset[]) : [];
+  const total = typeof (raw as any)?.total === "number" ? (raw as any).total : items.length;
+
+  const baseRows = items.map(toDetalleRow);
+
+  const rows: Inactivos15DetalleRow[] = baseRows.map((r, i) => {
+    const a = items[i] as any;
+    return {
+      ...r,
+      daysInactive: typeof a?.daysInactive === "number" ? a.daysInactive : undefined,
+      lastMovementAt: a?.lastMovementAt ? String(a.lastMovementAt) : undefined,
+    };
+  });
+
+  return { rows, total, limit, skip };
+}
+
+export type ReportDay = { dateStr: string; count?: number };
+
+export type ReportItem = {
+  id: string;
+  tenantId?: string;
+  dateStr?: string;
+  ranAt?: number | null;
+  ranAtIso?: string | null;
+  days?: number | null;
+  filename?: string | null;
+  bytes?: number | null;
+  storagePath?: string | null;
+};
+
+async function getJson<T>(tenantId: string, path: string): Promise<T> {
+  const headers = buildHeaders(tenantId);
+  const resp = await fetch(path, {
+    method: "GET",
+    headers,
+    credentials: "include",
+    cache: "no-store",
+  });
+
+  const txt = await resp.text().catch(() => "");
+  let data: any = null;
+  try { data = txt ? JSON.parse(txt) : null; } catch { data = { raw: txt }; }
+
+  if (!resp.ok) throw new Error(`Reports proxy error (${resp.status}): ${txt || "sin detalle"}`);
+  return unwrapOk<T>(data);
+}
+
+export async function fetchReportDays(tenantId: string, limit = 30): Promise<ReportDay[]> {
+  const data: any = await getJson<any>(tenantId, `/api/idlinens/reports/days?limit=${limit}`);
+  const items = Array.isArray(data?.items) ? data.items : [];
+  return items
+    .map((x: any) => ({ dateStr: String(x?.dateStr || "").trim(), count: typeof x?.count === "number" ? x.count : undefined }))
+    .filter((x: ReportDay) => !!x.dateStr);
+}
+
+export async function fetchReportsByDate(tenantId: string, dateStr: string, limit = 50): Promise<ReportItem[]> {
+  const data: any = await getJson<any>(tenantId, `/api/idlinens/reports?date=${encodeURIComponent(dateStr)}&limit=${limit}`);
+  const items = Array.isArray(data?.items) ? data.items : [];
+  return items
+    .map((x: any) => ({
+      id: String(x?.id || "").trim(),
+      tenantId: x?.tenantId,
+      dateStr: x?.dateStr,
+      ranAt: x?.ranAt ?? null,
+      ranAtIso: x?.ranAtIso ?? null,
+      days: x?.days ?? null,
+      filename: x?.filename ?? null,
+      bytes: x?.bytes ?? null,
+      storagePath: x?.storagePath ?? null,
+    }))
+    .filter((x: ReportItem) => !!x.id);
+}
+
+export function getReportDownloadUrl(reportId: string) {
+  return `/api/idlinens/reports/download?id=${encodeURIComponent(reportId)}`;
+}
 /** ---------------------------
- *  (Opcional) Export util si lo ocupas en otros lados
+ *  Export util
  *  --------------------------*/
 export { filterForEstado, getAllAssetsCached };

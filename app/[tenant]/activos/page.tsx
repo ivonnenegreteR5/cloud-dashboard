@@ -71,7 +71,7 @@ interface Row {
   creado: string;
   ultima: string;
 
-  // ✅ Opción A: timestamps numéricos para ordenar "más recientes arriba"
+  // ✅ timestamps numéricos para ordenar "más recientes arriba"
   createdSec: number;
   lastSeenSec: number;
 
@@ -110,9 +110,7 @@ interface ColumnFilter {
   value: string;
 }
 
-// ✅ Ahora filtros y sort soportan base + custom usando string keys
 type AnyColumnKey = string; // "base:estado" | "custom:mi_key" | ...
-
 type FiltersState = Partial<Record<AnyColumnKey, ColumnFilter>>;
 
 type SortDirection = "asc" | "desc" | null;
@@ -125,7 +123,7 @@ interface SortState {
 interface AssetCustomFieldDef {
   key: string;
   label: string;
-  type?: string; // text | number | date | boolean (puede venir vacío)
+  type?: string;
   readOnly?: boolean;
 }
 
@@ -177,7 +175,6 @@ function sanitizeCustom(
         continue;
       }
 
-      // date o text
       out[k] = s;
       continue;
     }
@@ -194,17 +191,13 @@ function sanitizeCustom(
   return out;
 }
 
-// ✅ FIX: formatear Unix con zona horaria fija (evita +1h del navegador)
+// ✅ FIX: formatear Unix con zona horaria fija
 const FIXED_TIMEZONE = "America/Mexico_City";
 
 function normalizeEpochSeconds(ts: any): number | null {
   const n = Number(ts);
   if (!Number.isFinite(n) || n <= 0) return null;
-
-  // si viene en milisegundos (13 dígitos), lo convertimos
   if (n > 1e12) return Math.floor(n / 1000);
-
-  // si viene en segundos (10 dígitos aprox), lo dejamos
   return Math.floor(n);
 }
 
@@ -237,17 +230,17 @@ export default function AdministrarActivosPage() {
 
   const router = useRouter();
 
-  // ✅ RBAC (admin y admin_location ven todo)
+  // ✅ RBAC
   const role =
     (typeof window !== "undefined"
       ? localStorage.getItem("cloudUserRole")
       : null) || "user";
 
   const roleLower = role.toLowerCase();
-const isAdmin =
-  roleLower === "admin" ||
-  roleLower === "admin_location" ||
-  roleLower === "superadmin";
+  const isAdmin =
+    roleLower === "admin" ||
+    roleLower === "admin_location" ||
+    roleLower === "superadmin";
 
   const [assets, setAssets] = useState<Asset[]>([]);
   const [loading, setLoading] = useState(true);
@@ -271,7 +264,6 @@ const isAdmin =
   const [newLocation, setNewLocation] = useState("");
   const [saving, setSaving] = useState(false);
 
-  // ✅ nuevo: valores dinámicos de campos personalizados
   const [newCustom, setNewCustom] = useState<Record<string, any>>({});
 
   const [customFieldsFromApi, setCustomFieldsFromApi] = useState<
@@ -281,13 +273,9 @@ const isAdmin =
 
   // ============================================================
   // ✅ FIX: Evitar que el auto-refresh cierre los menús
-  // - Contamos cuántos DropdownMenu están abiertos (global).
-  // - Mientras haya uno abierto, pausamos el refresh.
-  // - Cuando cierran todos, corremos un refresh inmediato.
   // ============================================================
   const openMenusCountRef = useRef(0);
   const [isAnyMenuOpen, setIsAnyMenuOpen] = useState(false);
-
   const refreshNowRef = useRef<() => void>(() => {});
 
   const handleAnyMenuOpenChange = useCallback((open: boolean) => {
@@ -297,7 +285,6 @@ const isAdmin =
     const anyOpen = openMenusCountRef.current > 0;
     setIsAnyMenuOpen(anyOpen);
 
-    // Si acaba de cerrar el último menú => refresca una vez (sin romper UI)
     if (!anyOpen) {
       setTimeout(() => {
         try {
@@ -365,7 +352,6 @@ const isAdmin =
     });
   };
 
-  // ===================== ✅ OCULTAR CUSTOM (AFECTA TABLA + AÑADIR + EDITAR) =====================
   const HIDDEN_CF_STORAGE_KEY = `cloud:hiddenCustomFields:${tenantForRequests}:assets`;
   const [hiddenCustomKeys, setHiddenCustomKeys] = useState<Set<string>>(new Set());
 
@@ -411,7 +397,7 @@ const isAdmin =
     setHiddenCustomKeys(new Set());
   };
 
-  // ✅ Key helpers para filtros/sort
+  // ✅ Key helpers
   const baseKey = (id: ColumnId) => `base:${id}`;
   const customKey = (key: string) => `custom:${String(key)}`;
 
@@ -439,22 +425,35 @@ const isAdmin =
   );
 
   // ============================================================
-  // ✅ Fetch assets (con anti-cache) + opción para NO romper UI en auto-refresh
+  // ✅ Fetch assets PAGINADO + (NUEVO) búsqueda global en servidor si hay filtros
   // ============================================================
   const fetchAssets = async (
     tenantId: string,
     sToken: string,
     iToken: string,
-    opts?: { preserveUi?: boolean; silent?: boolean }
+    opts?: { preserveUi?: boolean; silent?: boolean; page?: number; pageSize?: number }
   ) => {
     const preserveUi = Boolean(opts?.preserveUi);
     const silent = Boolean(opts?.silent);
+    const p = Math.max(1, Number(opts?.page ?? page));
+    const ps = Math.max(1, Math.min(Number(opts?.pageSize ?? pageSize), 500));
+    const skip = (p - 1) * ps;
+
+    // ✅ si hay filtros -> usar endpoint de búsqueda global (server-side)
+    const isSearching = Object.values(filters).some(
+      (f) => f && f.mode && f.value.trim() !== ""
+    );
+
+    const url = isSearching
+      ? `/api/cloud/assets/search?limit=${ps}&skip=${skip}&_ts=${Date.now()}`
+      : `/api/cloud/assets?limit=${ps}&skip=${skip}&_ts=${Date.now()}`;
 
     try {
       if (!silent) setLoading(true);
       setError(null);
 
-      const resp = await fetch(`/api/cloud/assets?limit=20000&_ts=${Date.now()}`, {
+      const resp = await fetch(url, {
+        method: isSearching ? "POST" : "GET",
         cache: "no-store",
         headers: {
           "x-session-token": sToken,
@@ -464,26 +463,22 @@ const isAdmin =
           Pragma: "no-cache",
           Expires: "0",
         },
+        body: isSearching ? JSON.stringify({ filters }) : undefined,
       });
 
-      const data = await resp.json();
+      const data = await resp.json().catch(() => ({}));
 
       if (!resp.ok || !data.ok) {
         throw new Error(data.error || "Error cargando activos");
       }
 
-      const lista = data.assets || [];
+      const lista = Array.isArray(data.assets) ? data.assets : [];
       setAssets(lista);
 
-      setTotalApiAssets(
-        typeof data.total === "number" ? data.total : lista.length
-      );
+      // ✅ total ahora puede ser total normal (sin filtros) o total filtrado (con filtros)
+      setTotalApiAssets(typeof data.total === "number" ? data.total : null);
 
-      // ✅ Si es auto-refresh, NO reseteamos selección/página
-      if (!preserveUi) {
-        setSelectedIds(new Set());
-        setPage(1);
-      }
+      if (!preserveUi) setSelectedIds(new Set());
     } catch (err: any) {
       console.error("Error cargando assets (administrar):", err);
       setError(err.message || "Error al cargar activos");
@@ -521,24 +516,19 @@ const isAdmin =
       let data: any = {};
       try {
         data = text ? JSON.parse(text) : {};
-      } catch (err) {
-        console.error(
-          "[AdministrarActivos] custom-fields no devolvió JSON válido. Inicio:",
-          text.slice(0, 200)
-        );
+      } catch {
         setCustomFieldsError("No se pudieron cargar los campos personalizados.");
         setCustomFieldsFromApi([]);
         return;
       }
 
       if (!resp.ok || data.ok === false) {
-        console.error("[AdministrarActivos] custom-fields error:", data);
         setCustomFieldsError(
           data.error || "No se pudieron cargar los campos personalizados."
         );
         setCustomFieldsFromApi([]);
       } else {
-        setCustomFieldsFromApi(data.items || []);
+        setCustomFieldsFromApi(Array.isArray(data.items) ? data.items : []);
       }
     } catch (err: any) {
       console.error("Error cargando custom fields:", err);
@@ -549,11 +539,20 @@ const isAdmin =
     }
   };
 
+  // ✅ cuando cambia pageSize => reset a página 1
   useEffect(() => {
     setPage(1);
+    setSelectedIds(new Set());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pageSize, tenantFromContext]);
 
-  // ✅ Carga inicial
+  // ✅ (NUEVO) cuando cambian filtros => ir a página 1 (porque ya es otra búsqueda)
+  useEffect(() => {
+    setPage(1);
+    setSelectedIds(new Set());
+  }, [filters]);
+
+  // ✅ Carga inicial + cuando cambia page + cuando cambian filtros (búsqueda global)
   useEffect(() => {
     const sToken = localStorage.getItem("cloudSessionToken");
     const iToken = localStorage.getItem("cloudIdToken");
@@ -567,24 +566,27 @@ const isAdmin =
     setIdToken(iToken);
 
     const tenantStr = tenantForRequests;
-    fetchAssets(tenantStr, sToken, iToken, { preserveUi: false });
+
+    fetchAssets(tenantStr, sToken, iToken, { preserveUi: false, page, pageSize });
+    // custom fields solo una vez por tenant
     fetchCustomFields(tenantStr, sToken, iToken);
-  }, [router, tenantForRequests]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [router, tenantForRequests, page, filters]);
 
   // ============================================================
-  // ✅ AUTO-REFRESH “instantáneo” (sin recargar página)
-  // ✅ FIX: si hay menú abierto, pausamos refresh para no cerrar dropdowns
+  // ✅ AUTO-REFRESH (10s) pero (NUEVO) se apaga mientras hay filtros activos
   // ============================================================
   useEffect(() => {
     if (!sessionToken || !idToken) return;
+
+    // ✅ si estás filtrando global, NO auto-refresh (para no hacer scans repetidos)
+    if (hayFiltrosActivos) return;
 
     let cancelled = false;
     let running = false;
 
     const run = async () => {
       if (cancelled || running) return;
-
-      // ✅ PAUSA mientras el usuario está usando menús (Columnas/Filtro/Orden)
       if (isAnyMenuOpen) return;
 
       running = true;
@@ -592,6 +594,8 @@ const isAdmin =
         await fetchAssets(String(tenantForRequests), sessionToken, idToken, {
           preserveUi: true,
           silent: true,
+          page,
+          pageSize,
         });
       } finally {
         running = false;
@@ -600,7 +604,7 @@ const isAdmin =
 
     refreshNowRef.current = run;
 
-    const interval = window.setInterval(run, 1000);
+    const interval = window.setInterval(run, 10_000);
 
     const onFocus = () => run();
     const onVisibility = () => {
@@ -619,10 +623,18 @@ const isAdmin =
       document.removeEventListener("visibilitychange", onVisibility);
       refreshNowRef.current = () => {};
     };
-  }, [sessionToken, idToken, tenantForRequests, isAnyMenuOpen]);
+  }, [
+    sessionToken,
+    idToken,
+    tenantForRequests,
+    isAnyMenuOpen,
+    page,
+    pageSize,
+    hayFiltrosActivos,
+  ]);
 
   // ============================================================
-  // ✅ INYECTAR "Ciclos de lavado" aunque no venga del API
+  // ✅ INYECTAR "Ciclos de lavado"
   // ============================================================
   const EXTRA_EDITABLE_CUSTOM_FIELDS: AssetCustomFieldDef[] = useMemo(() => {
     return [
@@ -670,7 +682,6 @@ const isAdmin =
 
         const t = normalizeCustomFieldType(cf.type);
         if (t === "boolean") next[cf.key] = false;
-        else if (t === "number") next[cf.key] = "";
         else next[cf.key] = "";
       }
       return next;
@@ -766,11 +777,9 @@ const isAdmin =
       const lastSeenTs =
         a.LastSeen || a.updatedAt || a.raw?.LastSeen || a.raw?.updatedAt;
 
-      // ✅ Opción A: numeric seconds (para orden por defecto)
       const createdSecNum = normalizeEpochSeconds(createdTs) ?? 0;
       const lastSeenSecNum = normalizeEpochSeconds(lastSeenTs) ?? 0;
 
-      // ✅ FIX: no usar toLocaleString() (timezone variable). Usar TZ fija.
       const creado = formatUnix(createdTs);
       const ultima = formatUnix(lastSeenTs);
 
@@ -796,11 +805,11 @@ const isAdmin =
     });
   }, [assets]);
 
-  // ✅ Filtro + Orden funcionan para base + custom
-  // ✅ Opción A: si NO hay sort manual => "más recientes arriba"
+  // ✅ OJO: ya filtramos en SERVER cuando hay filtros, aquí SOLO ordenamos (y un filtro "seguro")
   const dataFiltradaYOrdenada = useMemo(() => {
     let rows = [...baseRows];
 
+    // filtro extra (defensivo), normalmente ya vendrá filtrado del server
     rows = rows.filter((row) => {
       return Object.entries(filters).every(([key, filter]) => {
         if (!filter || !filter.mode || !filter.value.trim()) return true;
@@ -823,89 +832,50 @@ const isAdmin =
     });
 
     if (sort.column && sort.direction) {
-  rows.sort((a, b) => {
-    const col = sort.column!;
+      rows.sort((a, b) => {
+        const col = sort.column!;
 
-    // ✅ Fechas reales (NUMÉRICO) para que Asc/Desc funcione como esperas
-    if (col === "base:creado") {
-      const va = a.createdSec || 0;
-      const vb = b.createdSec || 0;
-      return sort.direction === "asc" ? va - vb : vb - va;
+        if (col === "base:creado") {
+          const va = a.createdSec || 0;
+          const vb = b.createdSec || 0;
+          return sort.direction === "asc" ? va - vb : vb - va;
+        }
+
+        if (col === "base:ultima") {
+          const va = a.lastSeenSec || 0;
+          const vb = b.lastSeenSec || 0;
+          return sort.direction === "asc" ? va - vb : vb - va;
+        }
+
+        const va = getValueByKey(a, col).toLowerCase();
+        const vb = getValueByKey(b, col).toLowerCase();
+        if (va < vb) return sort.direction === "asc" ? -1 : 1;
+        if (va > vb) return sort.direction === "asc" ? 1 : -1;
+        return 0;
+      });
+    } else {
+      rows.sort((a, b) => {
+        const aKey = (a.lastSeenSec || 0) || (a.createdSec || 0);
+        const bKey = (b.lastSeenSec || 0) || (b.createdSec || 0);
+        return bKey - aKey;
+      });
     }
-
-    if (col === "base:ultima") {
-      const va = a.lastSeenSec || 0;
-      const vb = b.lastSeenSec || 0;
-      return sort.direction === "asc" ? va - vb : vb - va;
-    }
-
-    // ✅ Default: texto (como lo tienes hoy)
-    const va = getValueByKey(a, col).toLowerCase();
-    const vb = getValueByKey(b, col).toLowerCase();
-    if (va < vb) return sort.direction === "asc" ? -1 : 1;
-    if (va > vb) return sort.direction === "asc" ? 1 : -1;
-    return 0;
-  });
-} else {
-  // (tu sort por defecto “más recientes arriba” se queda igual)
-  rows.sort((a, b) => {
-    const aKey = (a.lastSeenSec || 0) || (a.createdSec || 0);
-    const bKey = (b.lastSeenSec || 0) || (b.createdSec || 0);
-    return bKey - aKey;
-  });
-}
-
 
     return rows;
   }, [baseRows, filters, sort]);
 
-  const totalSinFiltro = baseRows.length;
-  const totalFiltrado = dataFiltradaYOrdenada.length;
-
-  const totalPages = Math.max(1, Math.ceil(totalFiltrado / (pageSize || 1)));
-  const pageSafe = Math.min(Math.max(page, 1), totalPages);
-
-  const data = useMemo(() => {
-    const start = (pageSafe - 1) * pageSize;
-    const end = start + pageSize;
-    return dataFiltradaYOrdenada.slice(start, end);
-  }, [dataFiltradaYOrdenada, pageSafe, pageSize]);
-
-  const totalParaCard = hayFiltrosActivos
-    ? totalFiltrado
-    : totalApiAssets ?? totalSinFiltro;
+  // ✅ total: ahora totalApiAssets ya es el total correcto (sin filtros o filtrado)
+  const totalParaCard = totalApiAssets ?? baseRows.length;
 
   const totalSeleccionados = dataFiltradaYOrdenada.filter((r) =>
     selectedIds.has(r.id)
   ).length;
-
-  const toggleRow = (id: string) => {
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
-
-  const toggleSelectAllVisible = () => {
-    const visibleIds = data.map((r) => r.id);
-    const allSelected = visibleIds.every((id) => selectedIds.has(id));
-
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (allSelected) visibleIds.forEach((id) => next.delete(id));
-      else visibleIds.forEach((id) => next.add(id));
-      return next;
-    });
-  };
 
   const handleSetFilterMode = (columnKey: AnyColumnKey, mode: FilterMode) => {
     setFilters((prev) => ({
       ...prev,
       [columnKey]: { mode, value: prev[columnKey]?.value ?? "" },
     }));
-    setPage(1);
   };
 
   const handleSetFilterValue = (columnKey: AnyColumnKey, value: string) => {
@@ -913,12 +883,10 @@ const isAdmin =
       ...prev,
       [columnKey]: { mode: prev[columnKey]?.mode ?? "contains", value },
     }));
-    setPage(1);
   };
 
   const handleClearFilters = () => {
     setFilters({});
-    setPage(1);
   };
 
   const handleSort = (columnKey: AnyColumnKey, direction: SortDirection) => {
@@ -979,22 +947,14 @@ const isAdmin =
         );
       }
 
-      // quitar de UI por docId
-      setAssets((prev) =>
-        prev.filter((a) => {
-          const localDocId = String(a._id || a.id || "").trim();
-          return !clean.includes(localDocId);
-        })
-      );
-
-      // limpiar selección (por uiId)
-      setSelectedIds((prev) => {
-        const next = new Set(prev);
-        for (const row of dataFiltradaYOrdenada) {
-          if (clean.includes(row.docId)) next.delete(row.id);
-        }
-        return next;
+      // recargar página actual para reflejar total
+      await fetchAssets(String(tenantForRequests), sessionToken, idToken, {
+        preserveUi: false,
+        page,
+        pageSize,
       });
+
+      setSelectedIds(new Set());
     } catch (err: any) {
       console.error("Error borrando activos:", err);
       alert(err.message || "Error eliminando activos");
@@ -1046,7 +1006,6 @@ const isAdmin =
 
       const nowSec = Math.floor(Date.now() / 1000);
 
-      // ✅ IMPORTANT: quitamos keys ocultas del payload
       const filteredNewCustom: Record<string, any> = {};
       for (const [k, v] of Object.entries(newCustom || {})) {
         if (isHiddenCustom(k)) continue;
@@ -1078,7 +1037,7 @@ const isAdmin =
         body: JSON.stringify({ items: [item] }),
       });
 
-      const dataResp = await resp.json();
+      const dataResp = await resp.json().catch(() => ({}));
 
       if (!resp.ok || !dataResp.ok) {
         throw new Error(dataResp.error || "Error guardando activo");
@@ -1086,7 +1045,10 @@ const isAdmin =
 
       await fetchAssets(String(tenantForRequests), sessionToken, idToken, {
         preserveUi: false,
+        page: 1,
+        pageSize,
       });
+      setPage(1);
 
       setShowAddForm(false);
       setNewTag("");
@@ -1111,7 +1073,6 @@ const isAdmin =
     />
   );
 
-  // ✅ Submenú universal "Columnas"
   const ColumnsSubMenu = () => {
     const baseItems = columns.map((c) => ({
       kind: "base" as const,
@@ -1138,7 +1099,6 @@ const isAdmin =
           <DropdownMenuLabel>Mostrar / Ocultar</DropdownMenuLabel>
           <DropdownMenuSeparator />
 
-          {/* ✅ FIX: que NO se cierre el menú al seleccionar */}
           <DropdownMenuItem
             onSelect={(e) => e.preventDefault()}
             onClick={showAllColumns}
@@ -1152,7 +1112,7 @@ const isAdmin =
           {items.slice(0, 60).map((it) => (
             <DropdownMenuItem
               key={`${it.kind}:${it.id}`}
-              onSelect={(e) => e.preventDefault()} // ✅ se queda abierto
+              onSelect={(e) => e.preventDefault()}
               onClick={() => {
                 if (it.kind === "base") toggleBaseColumn(it.id);
                 else toggleCustomColumn(it.id);
@@ -1173,7 +1133,6 @@ const isAdmin =
     );
   };
 
-  // ✅ Header de columna DEFAULT (sort/filtro + columnas)
   const renderColumnHeader = (col: ColumnDef) => {
     const k = baseKey(col.id);
     const currentFilter = filters[k];
@@ -1289,7 +1248,6 @@ const isAdmin =
     );
   };
 
-  // ✅ Header de columna CUSTOM (sort/filtro + columnas)
   const renderCustomHeader = (cf: AssetCustomFieldDef) => {
     const label = cf.label || cf.key;
     const k = customKey(cf.key);
@@ -1407,7 +1365,6 @@ const isAdmin =
     );
   };
 
-  // Render de inputs personalizados (form de "Añadir")
   const renderCustomFieldInput = (cf: AssetCustomFieldDef) => {
     const t = normalizeCustomFieldType(cf.type);
     const disabled = Boolean(cf.readOnly);
@@ -1477,15 +1434,26 @@ const isAdmin =
     );
   };
 
-  // ✅ helpers para mantener orden original base
   const getBaseCol = (id: ColumnId) => columns.find((c) => c.id === id)!;
 
-  // ✅ colSpan
   const tableColSpan =
-    1 + // checkbox
-    (isAdmin ? 1 : 0) + // acciones
-    columns.filter((c) => !isHiddenBase(c.id)).length + // base visibles
-    visibleCustomFields.length; // custom visibles
+    1 + (isAdmin ? 1 : 0) +
+    columns.filter((c) => !isHiddenBase(c.id)).length +
+    visibleCustomFields.length;
+
+  const totalPages = useMemo(() => {
+    const total = totalApiAssets ?? 0;
+    if (!total || !Number.isFinite(total)) return 1;
+    return Math.max(1, Math.ceil(total / Math.max(1, pageSize)));
+  }, [totalApiAssets, pageSize]);
+
+  const pageSafe = Math.min(Math.max(page, 1), totalPages);
+
+  // si el total baja y te quedas “fuera”, te regresamos
+  useEffect(() => {
+    if (page > totalPages) setPage(totalPages);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [totalPages]);
 
   return (
     <div className="min-h-screen w-full bg-neutral-50 text-neutral-900">
@@ -1499,7 +1467,7 @@ const isAdmin =
           </div>
           <div className="mt-1 text-sm text-neutral-600">
             {hayFiltrosActivos
-              ? "Coincidencias con filtros aplicados."
+              ? "Coincidencias (búsqueda global)."
               : "Total de activos registrados."}
           </div>
           <div className="mt-1 text-sm text-neutral-700">
@@ -1524,7 +1492,6 @@ const isAdmin =
                 Borrar Filtros
               </Button>
 
-              {/* 🔒 SOLO ADMIN / ADMIN_LOCATION: botón Añadir */}
               {isAdmin && (
                 <Button size="sm" onClick={() => setShowAddForm((v) => !v)}>
                   {showAddForm ? "Cerrar" : "Añadir"}
@@ -1534,7 +1501,6 @@ const isAdmin =
           </CardHeader>
 
           <CardContent>
-            {/* 🔒 SOLO ADMIN / ADMIN_LOCATION: formulario de alta */}
             {isAdmin && showAddForm && (
               <div className="mb-6 rounded-lg border bg-neutral-50 p-4">
                 <div className="flex flex-col gap-3 md:grid md:grid-cols-3">
@@ -1642,7 +1608,7 @@ const isAdmin =
                         type="checkbox"
                         className="h-4 w-4"
                         onChange={() => {
-                          const visibleIds = data.map((r) => r.id);
+                          const visibleIds = dataFiltradaYOrdenada.map((r) => r.id);
                           const allSelected = visibleIds.every((id) =>
                             selectedIds.has(id)
                           );
@@ -1656,13 +1622,12 @@ const isAdmin =
                           });
                         }}
                         checked={
-                          data.length > 0 &&
-                          data.every((r) => selectedIds.has(r.id))
+                          dataFiltradaYOrdenada.length > 0 &&
+                          dataFiltradaYOrdenada.every((r) => selectedIds.has(r.id))
                         }
                       />
                     </th>
 
-                    {/* 🔒 SOLO ADMIN / ADMIN_LOCATION: columna Acciones */}
                     {isAdmin && <th className="w-24 py-2">Acciones</th>}
 
                     {!isHiddenBase("estado") &&
@@ -1676,7 +1641,6 @@ const isAdmin =
                     {!isHiddenBase("empleado") &&
                       renderColumnHeader(getBaseCol("empleado"))}
 
-                    {/* ✅ custom visibles con filtro/orden */}
                     {visibleCustomFields.map((cf) => renderCustomHeader(cf))}
 
                     {!isHiddenBase("creado") &&
@@ -1695,7 +1659,7 @@ const isAdmin =
                     </tr>
                   )}
 
-                  {!loading && data.length === 0 && !error && (
+                  {!loading && dataFiltradaYOrdenada.length === 0 && !error && (
                     <tr>
                       <td colSpan={tableColSpan} className="py-6 text-center">
                         No hay activos que coincidan con los filtros.
@@ -1704,7 +1668,7 @@ const isAdmin =
                   )}
 
                   {!loading &&
-                    data.map((m, idx) => (
+                    dataFiltradaYOrdenada.map((m, idx) => (
                       <tr
                         key={m.id}
                         className={`border-b ${
@@ -1727,7 +1691,6 @@ const isAdmin =
                           />
                         </td>
 
-                        {/* 🔒 SOLO ADMIN / ADMIN_LOCATION: celda Acciones */}
                         {isAdmin && (
                           <td className="py-2 pr-2 align-top">
                             <div className="flex gap-2">
@@ -1794,7 +1757,6 @@ const isAdmin =
                           </td>
                         )}
 
-                        {/* ✅ solo custom visibles */}
                         {visibleCustomFields.map((cf) => {
                           const rawVal =
                             m.custom &&
@@ -1870,7 +1832,6 @@ const isAdmin =
                   </Button>
                 </div>
 
-                {/* 🔒 SOLO ADMIN / ADMIN_LOCATION: eliminar seleccionados */}
                 {isAdmin && (
                   <Button
                     className="rounded-xl"

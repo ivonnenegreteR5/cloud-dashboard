@@ -6,8 +6,11 @@ import { listAssetsWithSession } from "@/lib/cloudApi";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-const DEFAULT_LIMIT = 200;
-const MAX_LIMIT = 20000;
+const DEFAULT_LIMIT = 100;
+
+// ⚠️ Para UI, NO conviene 20,000. Aunque tu API lo soporte, mata rendimiento.
+// Si necesitas exportaciones masivas, haz un endpoint aparte "export".
+const MAX_LIMIT = 500;
 
 // ✅ Lista de custom keys que NO quieres que vuelvan a salir (por tenant)
 const DELETED_CUSTOM_KEYS_BY_TENANT: Record<string, string[]> = {
@@ -31,10 +34,11 @@ function isMeaningfulValue(v: any) {
   if (typeof v === "string") return v.trim().length > 0;
   if (typeof v === "number") return Number.isFinite(v);
   if (typeof v === "boolean") return true;
+  // objetos/arrays: los dejamos (si tú quieres, aquí puedes filtrarlos también)
   return true;
 }
 
-// ✅ limpia custom: quita undefined/null/""/"   "/NaN y keys inválidas
+// ✅ limpia custom: quita undefined/null/""/"   "/NaN y keys inválidas/blacklist
 function sanitizeCustomObject(custom: any, deletedKeys: Set<string>) {
   if (!custom || typeof custom !== "object") return {};
 
@@ -45,7 +49,7 @@ function sanitizeCustomObject(custom: any, deletedKeys: Set<string>) {
     if (!k) continue;
     if (k.toLowerCase() === "undefined") continue;
 
-    // 🔥 si está en la blacklist, lo quitamos SIEMPRE
+    // 🔥 blacklist por tenant
     if (deletedKeys.has(k)) continue;
 
     if (!isMeaningfulValue(v)) continue;
@@ -68,25 +72,38 @@ function withNoStore(res: NextResponse) {
   return res;
 }
 
+function toSafeInt(v: any, fallback: number) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.trunc(n);
+}
+
 export async function GET(req: Request) {
   try {
     const headers = new Headers(req.headers);
+
     const sessionToken = headers.get("x-session-token");
-    const authHeader = headers.get("authorization") || undefined;
+    const authHeader = headers.get("authorization") || "";
 
     // ✅ tenantId para DATA (superadmin)
-   const tenantId = headers.get("x-tenant-id") || "";
-if (!tenantId) {
-  return NextResponse.json(
-    { ok: false, error: "Falta x-tenant-id" },
-    { status: 400 }
-  );
-}
+    const tenantId = String(headers.get("x-tenant-id") || "").trim();
+    if (!tenantId) {
+      return withNoStore(
+        NextResponse.json({ ok: false, error: "Falta x-tenant-id" }, { status: 400 })
+      );
+    }
 
     if (!sessionToken) {
       return withNoStore(
+        NextResponse.json({ ok: false, error: "Falta x-session-token" }, { status: 401 })
+      );
+    }
+
+    // ⚠️ Si tu Cloud API depende del idToken para autorizar, mejor exigirlo aquí
+    if (!authHeader || !authHeader.toLowerCase().startsWith("bearer ")) {
+      return withNoStore(
         NextResponse.json(
-          { ok: false, error: "Falta x-session-token" },
+          { ok: false, error: "Falta Authorization Bearer <idToken>" },
           { status: 401 }
         )
       );
@@ -94,37 +111,40 @@ if (!tenantId) {
 
     const url = new URL(req.url);
 
-    // ✅ cache-buster opcional
-    url.searchParams.get("_ts");
+    const limitNum = toSafeInt(url.searchParams.get("limit"), DEFAULT_LIMIT);
+    const skipNum = toSafeInt(url.searchParams.get("skip"), 0);
 
-    const limitParam = url.searchParams.get("limit");
-    const skipParam = url.searchParams.get("skip");
+    const safeLimit = Math.min(Math.max(limitNum, 1), MAX_LIMIT);
+    const safeSkip = Math.max(skipNum, 0);
 
-    const limitNum = limitParam ? Number(limitParam) : DEFAULT_LIMIT;
-    const skipNum = skipParam ? Number(skipParam) : 0;
-
-    const safeLimit = Number.isFinite(limitNum)
-      ? Math.min(Math.max(limitNum, 1), MAX_LIMIT)
-      : DEFAULT_LIMIT;
-
-    const safeSkip = Number.isFinite(skipNum) && skipNum >= 0 ? skipNum : 0;
-
-    // ✅ FIX: PASAR tenantId como tenantIdHint para que Cloud API use ese tenant
-    const { items, total } = await listAssetsWithSession(
+    // ✅ Cloud API (tu backend) debe resolver por tenant:
+    // - ya sea porque le mandas tenantId en body
+    // - o porque le mandas x-tenant-id al gateway
+    const result = await listAssetsWithSession(
       sessionToken,
       safeLimit,
       safeSkip,
       authHeader,
-      tenantId // 👈 ESTO es lo que faltaba
+      tenantId
     );
+
+    const items = Array.isArray(result?.items) ? result.items : [];
+    const totalRaw = result?.total;
+
+    const total =
+      typeof totalRaw === "number"
+        ? totalRaw
+        : Number.isFinite(Number(totalRaw))
+        ? Number(totalRaw)
+        : items.length;
 
     // ✅ blacklist por tenant
     const deletedKeys = new Set(
-      (DELETED_CUSTOM_KEYS_BY_TENANT[String(tenantId)] || []).map((x) => String(x))
+      (DELETED_CUSTOM_KEYS_BY_TENANT[tenantId] || []).map((x) => String(x).trim())
     );
 
-    // ✅ Sanitizamos los assets
-    const cleanedItems = (items || []).map((a: any) => {
+    // ✅ Sanitizamos los assets (custom)
+    const cleanedItems = items.map((a: any) => {
       const rawCustom = a?.raw?.custom;
       const directCustom = a?.custom;
 
@@ -144,7 +164,14 @@ if (!tenantId) {
 
     return withNoStore(
       NextResponse.json(
-        { ok: true, assets: cleanedItems, total, tenantId },
+        {
+          ok: true,
+          assets: cleanedItems,
+          total,
+          limit: safeLimit,
+          skip: safeSkip,
+          tenantId,
+        },
         { status: 200 }
       )
     );
@@ -152,7 +179,7 @@ if (!tenantId) {
     console.error("GET /api/cloud/assets error:", err);
     return withNoStore(
       NextResponse.json(
-        { ok: false, error: err.message || "Error consultando assets" },
+        { ok: false, error: err?.message || "Error consultando assets" },
         { status: 500 }
       )
     );

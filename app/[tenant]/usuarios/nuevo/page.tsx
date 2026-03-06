@@ -1,3 +1,4 @@
+//app/[tenant]/usuarios/nuevo/page.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
@@ -42,6 +43,15 @@ function isRoleMissing(role?: string) {
   return !r || r === "null" || r === "undefined";
 }
 
+// Helper para limpiar mensajes de error que contienen HTML
+function cleanErrorMessage(msg: string | undefined): string {
+  if (!msg) return "Error desconocido";
+  if (msg.includes("<!DOCTYPE") || msg.includes("<html") || msg.length > 300) {
+    return "Error del servidor: respuesta inválida (ver consola para detalles)";
+  }
+  return msg;
+}
+
 export default function NuevoUsuarioPage() {
   const tenantFromContext = useTenant() as string | undefined;
   const pathname = usePathname();
@@ -75,14 +85,12 @@ export default function NuevoUsuarioPage() {
 
   const [userId, setUserId] = useState("");
   const [name, setName] = useState("");
-
   const [emailLocal, setEmailLocal] = useState("");
   const [emailDomain, setEmailDomain] = useState("com");
   const fixedAtTenantDot = tenantId ? `@${tenantId}.` : "@tenant.";
   const fullEmail = `${emailLocal.trim()}${fixedAtTenantDot}${emailDomain.trim()}`;
 
   const [password, setPassword] = useState("");
-
   const [role, setRole] = useState("");
   const [selectedLocationId, setSelectedLocationId] = useState("");
   const [locations, setLocations] = useState<LocationItem[]>([]);
@@ -99,7 +107,7 @@ export default function NuevoUsuarioPage() {
 
   const [showPassword, setShowPassword] = useState(false);
 
-  // --------- Reparar rol (estado UI) ----------
+  // Reparar rol
   const [repairingId, setRepairingId] = useState<string | null>(null);
   const [repairRole, setRepairRole] = useState<string>("");
   const [repairLocationId, setRepairLocationId] = useState<string>("");
@@ -118,7 +126,7 @@ export default function NuevoUsuarioPage() {
   const fetchUsers = async () => {
     try {
       if (!tenantId) {
-        setError("No se pudo determinar el tenantId. Revisa la URL /[tenant]/usuarios/nuevo.");
+        setError("No se pudo determinar el tenantId. Revisa la URL.");
         return;
       }
 
@@ -147,10 +155,16 @@ export default function NuevoUsuarioPage() {
       });
 
       const text = await res.text();
+
+      // Log para depurar
+      console.log("[fetchUsers] Status:", res.status, "Response length:", text.length);
+      if (text.length < 500) console.log("[fetchUsers] Response preview:", text.substring(0, 200));
+
       let data: any = {};
       try {
         data = text ? JSON.parse(text) : {};
-      } catch {
+      } catch (parseErr) {
+        console.error("[fetchUsers] No se pudo parsear JSON:", parseErr);
         data = { raw: text };
       }
 
@@ -158,7 +172,7 @@ export default function NuevoUsuarioPage() {
         const msg =
           data.error ||
           data.message ||
-          data.raw ||
+          (data.raw && typeof data.raw === "string" && data.raw.substring(0, 100)) ||
           `Error HTTP ${res.status} al obtener usuarios.`;
         throw new Error(msg);
       }
@@ -175,7 +189,7 @@ export default function NuevoUsuarioPage() {
       setUsers(mapped);
     } catch (err: any) {
       console.error("fetchUsers error:", err);
-      setError(err.message || "Error cargando usuarios");
+      setError(cleanErrorMessage(err.message));
     } finally {
       setListLoading(false);
     }
@@ -190,6 +204,7 @@ export default function NuevoUsuarioPage() {
       if (!sessionToken) return;
 
       setLocationsLoading(true);
+      setError(null);
 
       const headers: Record<string, string> = {
         "Content-Type": "application/json",
@@ -205,10 +220,16 @@ export default function NuevoUsuarioPage() {
       });
 
       const text = await res.text();
+
+      // Log para depurar
+      console.log("[fetchLocations] Status:", res.status, "Response length:", text.length);
+      if (text.length < 500) console.log("[fetchLocations] Response preview:", text.substring(0, 200));
+
       let data: any = {};
       try {
         data = text ? JSON.parse(text) : {};
-      } catch {
+      } catch (parseErr) {
+        console.error("[fetchLocations] No se pudo parsear JSON:", parseErr);
         data = { raw: text };
       }
 
@@ -216,7 +237,7 @@ export default function NuevoUsuarioPage() {
         const msg =
           data.error ||
           data.message ||
-          data.raw ||
+          (data.raw && typeof data.raw === "string" && data.raw.substring(0, 100)) ||
           `Error HTTP ${res.status} al obtener ubicaciones.`;
         throw new Error(msg);
       }
@@ -230,7 +251,7 @@ export default function NuevoUsuarioPage() {
       setLocations(mapped);
     } catch (err: any) {
       console.error("fetchLocations error:", err);
-      setError((prev) => prev || err.message || "Error cargando ubicaciones");
+      setError(cleanErrorMessage(err.message));
     } finally {
       setLocationsLoading(false);
     }
@@ -249,18 +270,17 @@ export default function NuevoUsuarioPage() {
 
     try {
       if (!tenantId) {
-        setError("No se pudo determinar el tenantId. Revisa la URL /[tenant]/usuarios/nuevo.");
+        setError("No se pudo determinar el tenantId.");
         return;
       }
 
       const sessionToken = getSessionToken();
       const idToken = getIdToken();
 
-      if (!sessionToken) throw new Error("No se encontró sessionToken. Vuelve a iniciar sesión.");
+      if (!sessionToken) throw new Error("No se encontró sessionToken.");
 
-      // CreateUser te lo está pidiendo el Gateway (403 Token lacks tenantId si no viene bien el JWT)
       if (!idToken) {
-        throw new Error("No se encontró cloudIdToken (JWT). Cierra sesión y vuelve a iniciar sesión.");
+        throw new Error("No se encontró cloudIdToken (JWT).");
       }
 
       setLoading(true);
@@ -303,6 +323,10 @@ export default function NuevoUsuarioPage() {
       });
 
       const text = await res.text();
+
+      console.log("[handleSubmit] Status:", res.status, "Response length:", text.length);
+      if (text.length < 500) console.log("[handleSubmit] Response preview:", text.substring(0, 200));
+
       let data: any = {};
       try {
         data = text ? JSON.parse(text) : {};
@@ -314,13 +338,14 @@ export default function NuevoUsuarioPage() {
         const msg =
           data.error ||
           data.message ||
-          data.raw ||
+          (typeof data.raw === "string" && data.raw.substring(0, 100)) ||
           `Error HTTP ${res.status} al crear usuario.`;
         throw new Error(msg);
       }
 
       setOkMessage("Usuario creado correctamente ✅");
 
+      // Limpiar formulario
       setUserId("");
       setName("");
       setEmailLocal("");
@@ -332,22 +357,21 @@ export default function NuevoUsuarioPage() {
       fetchUsers();
     } catch (err: any) {
       console.error("handleSubmit error:", err);
-      setError(err.message || "Error inesperado");
+      setError(cleanErrorMessage(err.message));
     } finally {
       setLoading(false);
     }
   };
 
   const handleDelete = async (id: string) => {
-    const confirmDelete = window.confirm("¿Seguro que deseas eliminar este usuario?");
-    if (!confirmDelete) return;
+    if (!window.confirm("¿Seguro que deseas eliminar este usuario?")) return;
 
     try {
       setError(null);
       setOkMessage(null);
 
       if (!tenantId) {
-        setError("No se pudo determinar el tenantId. Revisa la URL /[tenant]/usuarios/nuevo.");
+        setError("No se pudo determinar el tenantId.");
         return;
       }
 
@@ -355,7 +379,7 @@ export default function NuevoUsuarioPage() {
       const idToken = getIdToken();
 
       if (!sessionToken) {
-        setError("No se encontró sessionToken. Vuelve a iniciar sesión.");
+        setError("No se encontró sessionToken.");
         return;
       }
 
@@ -375,6 +399,10 @@ export default function NuevoUsuarioPage() {
       });
 
       const text = await res.text();
+
+      console.log("[handleDelete] Status:", res.status, "Response length:", text.length);
+      if (text.length < 500) console.log("[handleDelete] Response preview:", text.substring(0, 200));
+
       let data: any = {};
       try {
         data = text ? JSON.parse(text) : {};
@@ -386,7 +414,7 @@ export default function NuevoUsuarioPage() {
         const msg =
           data.error ||
           data.message ||
-          data.raw ||
+          (typeof data.raw === "string" && data.raw.substring(0, 100)) ||
           `Error HTTP ${res.status} al eliminar usuario.`;
         throw new Error(msg);
       }
@@ -395,25 +423,23 @@ export default function NuevoUsuarioPage() {
       setOkMessage("Usuario eliminado ✅");
     } catch (err: any) {
       console.error("handleDelete error:", err);
-      setError(err.message || "Error eliminando usuario");
+      setError(cleanErrorMessage(err.message));
     } finally {
       setDeletingId(null);
     }
   };
 
-  // ✅ NUEVO: Reparar rol (actualiza claims vía server)
+  // Reparar rol
   const startRepair = (u: PersonnelItem) => {
     setError(null);
     setOkMessage(null);
 
     if (!u?.id) return;
 
-    // preset: si ya trae rol, lo ponemos; si no, "user" no existe en selector, ponemos admin por defecto
     const presetRole = !isRoleMissing(u.role) ? String(u.role) : "admin";
     setRepairingId(u.id);
     setRepairRole(presetRole);
 
-    // intentamos pre-seleccionar ubicación por nombre (si existe)
     const found = locations.find((l) => l.Name === u.Location);
     setRepairLocationId(found?.id || "");
   };
@@ -435,10 +461,10 @@ export default function NuevoUsuarioPage() {
 
       const sessionToken = getSessionToken();
       const idToken = getIdToken();
-      if (!sessionToken) throw new Error("No se encontró sessionToken. Vuelve a iniciar sesión.");
-      if (!idToken) throw new Error("No se encontró cloudIdToken (JWT). Cierra sesión y vuelve a iniciar sesión.");
+      if (!sessionToken) throw new Error("No se encontró sessionToken.");
+      if (!idToken) throw new Error("No se encontró cloudIdToken (JWT).");
 
-      if (!u.Email) throw new Error("Este usuario no tiene Email guardado. No puedo reparar claims sin email.");
+      if (!u.Email) throw new Error("Este usuario no tiene Email guardado.");
 
       if (!repairRole) throw new Error("Selecciona un rol.");
 
@@ -462,7 +488,6 @@ export default function NuevoUsuarioPage() {
         Authorization: `Bearer ${idToken}`,
       };
 
-      // pegamos a nuestro route interno (server-side) que hace upsert al Cloud API
       const res = await fetch("/api/cloud/personnel/upsert", {
         method: "POST",
         headers,
@@ -471,11 +496,15 @@ export default function NuevoUsuarioPage() {
           name: u.Name || u.id,
           email: u.Email,
           role: repairRole,
-          location: selectedLocationName, // guardamos Location en Firestore; claims usarán locationId si el server lo decide
+          location: selectedLocationName,
         }),
       });
 
       const text = await res.text();
+
+      console.log("[submitRepair] Status:", res.status, "Response length:", text.length);
+      if (text.length < 500) console.log("[submitRepair] Response preview:", text.substring(0, 200));
+
       let data: any = {};
       try {
         data = text ? JSON.parse(text) : {};
@@ -487,17 +516,17 @@ export default function NuevoUsuarioPage() {
         const msg =
           data.error ||
           data.message ||
-          data.raw ||
+          (typeof data.raw === "string" && data.raw.substring(0, 100)) ||
           `Error HTTP ${res.status} al reparar usuario.`;
         throw new Error(msg);
       }
 
-      setOkMessage("Rol reparado ✅ (pídele al usuario cerrar sesión y volver a entrar para renovar token)");
+      setOkMessage("Rol reparado ✅ (el usuario debe cerrar y volver a abrir sesión)");
       cancelRepair();
       fetchUsers();
     } catch (err: any) {
       console.error("submitRepair error:", err);
-      setError(err.message || "Error reparando rol");
+      setError(cleanErrorMessage(err.message));
     } finally {
       setRepairLoading(false);
     }
@@ -632,6 +661,8 @@ export default function NuevoUsuarioPage() {
                     <label className="text-sm font-medium">Ubicación</label>
                     {locationsLoading ? (
                       <p className="text-xs text-neutral-500">Cargando ubicaciones...</p>
+                    ) : locations.length === 0 ? (
+                      <p className="text-xs text-amber-600">No hay ubicaciones disponibles</p>
                     ) : (
                       <Select value={selectedLocationId} onValueChange={setSelectedLocationId}>
                         <SelectTrigger>
@@ -650,8 +681,17 @@ export default function NuevoUsuarioPage() {
                 )}
               </div>
 
-              {error && <p className="text-sm text-red-600">{error}</p>}
-              {okMessage && <p className="text-sm text-emerald-600">{okMessage}</p>}
+              {error && (
+                <div className="rounded-md bg-red-50 p-4 border border-red-200">
+                  <p className="text-sm text-red-700">{error}</p>
+                </div>
+              )}
+
+              {okMessage && (
+                <div className="rounded-md bg-green-50 p-4 border border-green-200">
+                  <p className="text-sm text-green-700">{okMessage}</p>
+                </div>
+              )}
 
               <Button type="submit" disabled={loading}>
                 {loading ? "Guardando..." : "Añadir usuario"}
@@ -668,7 +708,7 @@ export default function NuevoUsuarioPage() {
             {listLoading ? (
               <p className="text-sm text-neutral-600">Cargando usuarios...</p>
             ) : users.length === 0 ? (
-              <p className="text-sm text-neutral-600">No hay usuarios registrados.</p>
+              <p className="text-sm text-neutral-600">No hay usuarios registrados aún.</p>
             ) : (
               <div className="overflow-x-auto">
                 <table className="min-w-full text-sm">
@@ -687,19 +727,19 @@ export default function NuevoUsuarioPage() {
                       const missingRole = isRoleMissing(u.role);
 
                       return (
-                        <tr key={u.id} className="border-b last:border-0">
-                          <td className="px-3 py-2 align-middle">{u.id || "-"}</td>
-                          <td className="px-3 py-2 align-middle">{u.Name || "-"}</td>
-                          <td className="px-3 py-2 align-middle">{u.Email || "-"}</td>
-                          <td className="px-3 py-2 align-middle">
+                        <tr key={u.id} className="border-b last:border-0 hover:bg-neutral-50">
+                          <td className="px-3 py-3 align-middle">{u.id || "-"}</td>
+                          <td className="px-3 py-3 align-middle">{u.Name || "-"}</td>
+                          <td className="px-3 py-3 align-middle">{u.Email || "-"}</td>
+                          <td className="px-3 py-3 align-middle">
                             {missingRole ? (
                               <span className="text-amber-700 font-medium">SIN ROL</span>
                             ) : (
                               u.role
                             )}
                           </td>
-                          <td className="px-3 py-2 align-middle">{u.Location || "-"}</td>
-                          <td className="px-3 py-2 align-middle">
+                          <td className="px-3 py-3 align-middle">{u.Location || "-"}</td>
+                          <td className="px-3 py-3 align-middle">
                             <div className="flex gap-2 flex-wrap">
                               {missingRole && (
                                 <Button
@@ -712,7 +752,7 @@ export default function NuevoUsuarioPage() {
                               )}
 
                               <Button
-                                variant="outline"
+                                variant="destructive"
                                 size="sm"
                                 disabled={deletingId === u.id}
                                 onClick={() => handleDelete(u.id)}
@@ -721,15 +761,13 @@ export default function NuevoUsuarioPage() {
                               </Button>
                             </div>
 
-                            {/* UI inline para reparar */}
                             {repairingId === u.id && (
-                              <div className="mt-3 rounded-lg border p-3 bg-neutral-50 space-y-3">
-                                <div className="text-xs text-neutral-600">
-                                  Esto actualiza Firestore + claims. Luego el usuario debe
-                                  cerrar sesión y volver a entrar para renovar token.
-                                </div>
+                              <div className="mt-4 p-4 border rounded-lg bg-neutral-50 space-y-4">
+                                <p className="text-xs text-neutral-600">
+                                  Actualiza rol y ubicación. El usuario debe cerrar y volver a abrir sesión.
+                                </p>
 
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                   <div>
                                     <label className="text-xs font-medium">Rol</label>
                                     <Select
@@ -756,7 +794,9 @@ export default function NuevoUsuarioPage() {
                                     <div>
                                       <label className="text-xs font-medium">Ubicación</label>
                                       {locationsLoading ? (
-                                        <p className="text-xs text-neutral-500">Cargando ubicaciones...</p>
+                                        <p className="text-xs text-neutral-500">Cargando...</p>
+                                      ) : locations.length === 0 ? (
+                                        <p className="text-xs text-amber-600">No hay ubicaciones</p>
                                       ) : (
                                         <Select
                                           value={repairLocationId}
@@ -778,13 +818,13 @@ export default function NuevoUsuarioPage() {
                                   )}
                                 </div>
 
-                                <div className="flex gap-2">
+                                <div className="flex gap-3">
                                   <Button
                                     size="sm"
                                     onClick={submitRepair}
                                     disabled={repairLoading}
                                   >
-                                    {repairLoading ? "Reparando..." : "Guardar"}
+                                    {repairLoading ? "Reparando..." : "Guardar cambios"}
                                   </Button>
                                   <Button
                                     size="sm"

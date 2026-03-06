@@ -1,90 +1,75 @@
-// app/api/cloud/assets/update/route.ts
-import { NextResponse } from "next/server";
-import { updateAssetsWithSession } from "@/lib/cloudApi";
+// app/api/cloud/personnel/create/route.ts
+import { NextRequest, NextResponse } from "next/server";
+import { cloudCreatePersonnelUser } from "@/lib/cloudApi";
 
-export async function POST(req: Request) {
+export async function POST(req: NextRequest) {
   try {
-    const headersList = new Headers(req.headers);
-
-    const sessionToken = headersList.get("x-session-token");
-    const authHeader = headersList.get("authorization") || undefined;
-
-    // ✅ Mantén tu header como principal
-    const tenantIdHeader = headersList.get("x-tenant-id");
-
-    // ✅ Fallback suave (no rompe nada): permite ?tenantId=demo si algún día lo ocupas
-    const tenantIdQuery = new URL(req.url).searchParams.get("tenantId");
-
-    const tenantId = (tenantIdHeader || tenantIdQuery || "").trim();
-
-    if (!tenantId) {
-      return NextResponse.json(
-        { ok: false, error: "Falta x-tenant-id en los headers (o tenantId en query)" },
-        { status: 400 }
-      );
-    }
+    const sessionToken = req.headers.get("x-session-token");
+    const tenantIdHeader = req.headers.get("x-tenant-id");
+    const authHeader = req.headers.get("authorization") || undefined; // Bearer {idToken}
 
     if (!sessionToken) {
       return NextResponse.json(
-        { ok: false, error: "Falta x-session-token" },
+        { status: 401, message: "Falta x-session-token" },
         { status: 401 }
       );
     }
-
-    const body = await req.json().catch(() => ({}));
-    const items = (body?.items || []) as any[];
-
-    if (!Array.isArray(items) || items.length === 0) {
+    if (!tenantIdHeader) {
       return NextResponse.json(
-        { ok: false, error: "items[] requerido" },
+        { status: 400, message: "Falta x-tenant-id" },
         { status: 400 }
       );
     }
 
-    // ✅ Intento de registrar empleado (sin romper tu payload):
-    // - Si el item YA trae PersonnelName/personnelName/personnelId, NO lo tocamos.
-    // - Si NO trae nada, usamos headers opcionales enviados por el front.
-    const userName = (headersList.get("x-user-name") || "").trim();
-    const userEmail = (headersList.get("x-user-email") || "").trim();
-    const employeeValue = userName || userEmail || "";
+    const tenantId = String(tenantIdHeader);
 
-    const patchedItems = items.map((it) => {
-      // no tocar si no es objeto
-      if (!it || typeof it !== "object") return it;
+    const body = await req.json();
+    const email = String(body?.email || "").trim();
+    const password = String(body?.password || "");
+    const name = String(body?.name || "").trim();
+    const id = body?.id ? String(body.id).trim() : undefined;
+    const role = body?.role ? String(body.role).trim() : "user";
+    const location = body?.location ? String(body.location).trim() : "";
 
-      const alreadyHasEmployee =
-        it.PersonnelName ||
-        it.personnelName ||
-        it.Personnel ||
-        it.personnel ||
-        it.personnelId ||
-        it.PersonnelId ||
-        it.EmployeeName ||
-        it.employeeName;
+    if (!email || !password) {
+      return NextResponse.json(
+        { status: 400, message: "Email y password son obligatorios" },
+        { status: 400 }
+      );
+    }
+    if (!name) {
+      return NextResponse.json(
+        { status: 400, message: "Name es obligatorio" },
+        { status: 400 }
+      );
+    }
+    if (password.length < 6) {
+      return NextResponse.json(
+        { status: 400, message: "La contraseña debe tener al menos 6 caracteres" },
+        { status: 400 }
+      );
+    }
 
-      if (alreadyHasEmployee || !employeeValue) return it;
-
-      // ✅ inyecta de forma compatible (no sabemos cuál consume tu backend, mandamos 2)
-      return {
-        ...it,
-        PersonnelName: employeeValue,
-        personnelName: employeeValue,
-      };
-    });
-
-    const result = await updateAssetsWithSession(
+    // ✅ Crea usuario en Firebase Auth + guarda/actualiza en Personnel
+    const data = await cloudCreatePersonnelUser({
       tenantId,
       sessionToken,
-      patchedItems,
-      authHeader
-    );
+      email,
+      password,
+      name,
+      id,
+      role: role || "user",
+      location,
+      authHeader,
+    });
 
-    return NextResponse.json({ ok: true, result });
+    return NextResponse.json(data, { status: 200 });
   } catch (err: any) {
-    console.error("POST /api/cloud/assets/update error:", err);
+    console.error("cloud personnel/create error:", err);
     return NextResponse.json(
-      { ok: false, error: err.message || "Error actualizando assets" },
+      { status: 500, message: err?.message || "Error interno" },
       { status: 500 }
     );
   }
 }
+
