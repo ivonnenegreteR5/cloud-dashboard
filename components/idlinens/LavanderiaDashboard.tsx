@@ -296,7 +296,7 @@ export function LavanderiaDashboard({ tenantId }: { tenantId: string }) {
       )}
 
       {/* ✅ Tabla principal arriba (como tu imagen) */}
-      <div ref={tableRef} className="rounded-lg border bg-white p-4">
+     <div ref={tableRef} className="min-w-0 w-full max-w-full overflow-hidden rounded-lg border bg-white p-4">
         <div className="mb-2 flex items-center justify-between gap-3">
           <div className="text-base font-semibold">Lista de Blancos en Lavandería</div>
           <div className="flex items-center gap-2">
@@ -326,7 +326,7 @@ export function LavanderiaDashboard({ tenantId }: { tenantId: string }) {
               <div className="text-xs text-neutral-500">
                 {selectedTipo
                   ? `${rows.length}${total ? ` / ${total}` : ""}`
-                  : `${rows.length} (muestra rápida)`}
+                  : `${rows.length}.  `}
               </div>
               {selectedTipo ? (
                 <button
@@ -400,23 +400,27 @@ export function LavanderiaDashboard({ tenantId }: { tenantId: string }) {
           ) : (
             <div className="h-[360px]">
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart
-                  data={avgData}
-                  margin={{ top: 10, right: 10, left: 10, bottom: 60 }}
-                >
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis
-                    dataKey="tipo"
-                    interval={0}
-                    angle={-45}
-                    textAnchor="end"
-                    height={70}
-                    tick={{ fontSize: 11 }}
-                  />
-                  <YAxis />
-                  <Tooltip />
-                  <Bar dataKey="avgDias" minPointSize={3} />
-                </BarChart>
+           <BarChart
+  data={avgData}
+  margin={{ top: 10, right: 10, left: 10, bottom: 60 }}
+>
+  <CartesianGrid strokeDasharray="3 3" />
+  <XAxis
+    dataKey="tipo"
+    interval={0}
+    angle={-45}
+    textAnchor="end"
+    height={70}
+    tick={{ fontSize: 11 }}
+  />
+  <YAxis />
+
+  <Tooltip
+    formatter={(value) => [`${value}`, "Días"]}
+  />
+
+  <Bar dataKey="avgDias" minPointSize={3} />
+</BarChart>
               </ResponsiveContainer>
             </div>
           )}

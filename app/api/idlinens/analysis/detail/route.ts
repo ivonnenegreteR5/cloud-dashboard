@@ -1,4 +1,6 @@
 // app/api/idlinens/analysis/detail/route.ts
+
+// app/api/idlinens/analysis/detail/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { searchAssetsWithSession } from "@/lib/cloudApi";
 import { __getAnalysisCache, __setAnalysisCache } from "../route";
@@ -18,6 +20,9 @@ type AnalysisAsset = {
   location: string;
   ciclosLavado: number;
   createdAtMs: number | null;
+  lastSeenAtMs: number | null;
+  employee: string;
+  diasEnLavanderia: number | null;
 };
 
 type CacheEntry = {
@@ -42,7 +47,6 @@ function cleanNum(v: unknown, fallback: number) {
 function parseDateToMs(v: any): number | null {
   if (v === null || v === undefined || v === "") return null;
 
-  // epoch seconds / ms
   const n = Number(v);
   if (Number.isFinite(n) && n > 0) {
     const ms = n > 9_999_999_999 ? n : n * 1000;
@@ -63,6 +67,14 @@ function pickStr(...vals: any[]) {
   return "";
 }
 
+function pickNum(...vals: any[]) {
+  for (const v of vals) {
+    const n = Number(v);
+    if (Number.isFinite(n)) return n;
+  }
+  return null;
+}
+
 function weekFromAgeDays(ageDays: number) {
   return Math.max(1, Math.floor(ageDays / 7) + 1);
 }
@@ -81,25 +93,33 @@ function isCreatedStatus(status: string) {
   return k === "created" || k === "creado" || k === "nuevo" || k === "nuevos";
 }
 
+function daysFromNow(ms: number | null) {
+  if (!ms) return null;
+  const diff = Date.now() - ms;
+  if (!Number.isFinite(diff) || diff < 0) return 0;
+  return Math.floor(diff / 86_400_000);
+}
+
 function getTokensFromReq(req: NextRequest, body: any) {
   const sessionToken =
     cleanStr(body?.sessionToken || body?.auth?.token) ||
     cleanStr(req.headers.get("x-session-token"));
 
-  // JWT Firebase (Gateway)
   const idToken = cleanStr(body?.idToken);
   const authHeader =
-    cleanStr(req.headers.get("authorization")) || (idToken ? `Bearer ${idToken}` : "");
+    cleanStr(req.headers.get("authorization")) ||
+    (idToken ? `Bearer ${idToken}` : "");
 
   const tenantHint =
     cleanStr(req.headers.get("x-tenant-id")) ||
-    cleanStr(req.cookies.get("cloudSelectedTenantId")?.value);
+    cleanStr(req.cookies.get("cloudSelectedTenantId")?.value) ||
+    cleanStr(body?.tenantId);
 
   return { sessionToken, authHeader, tenantHint };
 }
 
 // =====================
-// Mappers (mismos criterios que analysis/route.ts)
+// Mapper
 // =====================
 function toAnalysisAsset(a: any): AnalysisAsset {
   const tag = pickStr(
@@ -121,17 +141,14 @@ function toAnalysisAsset(a: any): AnalysisAsset {
     a?.type,
     a?.tipo,
     a?.Description,
-
     a?.custom?.AssetType,
     a?.custom?.type,
     a?.custom?.tipo,
     a?.custom?.Description,
-
     a?.custom?.fields?.AssetType,
     a?.custom?.fields?.type,
     a?.custom?.fields?.tipo,
     a?.custom?.fields?.Description,
-
     "—"
   );
 
@@ -150,17 +167,14 @@ function toAnalysisAsset(a: any): AnalysisAsset {
     a?.location,
     a?.ubicacion,
     a?.locationId,
-
     a?.custom?.Location,
     a?.custom?.location,
     a?.custom?.ubicacion,
     a?.custom?.locationId,
-
     a?.custom?.fields?.Location,
     a?.custom?.fields?.location,
     a?.custom?.fields?.ubicacion,
     a?.custom?.fields?.locationId,
-
     "—"
   );
 
@@ -175,10 +189,8 @@ function toAnalysisAsset(a: any): AnalysisAsset {
         0
     ) || 0;
 
-  // ✅ AJUSTE CLAVE: tu tenant HACH trae Created / LastSeen (epoch seconds)
-  // createdAt con fallback a lastSeen si no existe
   const createdAtMs =
-    parseDateToMs(a?.Created) ?? // ✅ real (captura)
+    parseDateToMs(a?.Created) ??
     parseDateToMs(a?.CreatedAt) ??
     parseDateToMs(a?.createdAt) ??
     parseDateToMs(a?.created) ??
@@ -193,19 +205,69 @@ function toAnalysisAsset(a: any): AnalysisAsset {
     parseDateToMs(a?.custom?.fields?.createdAt) ??
     parseDateToMs(a?.custom?.fields?.created) ??
     parseDateToMs(a?.custom?.fields?.creado) ??
-    parseDateToMs(a?.LastSeen) ?? // ✅ real (captura)
+    null;
+
+  const lastSeenAtMs =
+    parseDateToMs(a?.LastSeen) ??
     parseDateToMs(a?.lastSeen) ??
     parseDateToMs(a?.vistoUltimaVez) ??
     parseDateToMs(a?.custom?.LastSeen) ??
     parseDateToMs(a?.custom?.lastSeen) ??
     parseDateToMs(a?.custom?.vistoUltimaVez) ??
+    parseDateToMs(a?.custom?.fields?.LastSeen) ??
+    parseDateToMs(a?.custom?.fields?.lastSeen) ??
+    parseDateToMs(a?.custom?.fields?.vistoUltimaVez) ??
     null;
 
-  return { _id, tag, tipo, status, location, ciclosLavado, createdAtMs };
+  const employee = pickStr(
+    a?.Employee,
+    a?.employee,
+    a?.Empleado,
+    a?.empleado,
+    a?.AssignedTo,
+    a?.assignedTo,
+    a?.custom?.Employee,
+    a?.custom?.employee,
+    a?.custom?.Empleado,
+    a?.custom?.empleado,
+    a?.custom?.AssignedTo,
+    a?.custom?.assignedTo,
+    a?.custom?.fields?.Employee,
+    a?.custom?.fields?.employee,
+    a?.custom?.fields?.Empleado,
+    a?.custom?.fields?.empleado,
+    a?.custom?.fields?.AssignedTo,
+    a?.custom?.fields?.assignedTo
+  );
+
+  const diasEnLavanderia = pickNum(
+    a?.diasEnLavanderia,
+    a?.DaysInLaundry,
+    a?.daysInLaundry,
+    a?.custom?.diasEnLavanderia,
+    a?.custom?.DaysInLaundry,
+    a?.custom?.daysInLaundry,
+    a?.custom?.fields?.diasEnLavanderia,
+    a?.custom?.fields?.DaysInLaundry,
+    a?.custom?.fields?.daysInLaundry
+  );
+
+  return {
+    _id,
+    tag,
+    tipo,
+    status,
+    location,
+    ciclosLavado,
+    createdAtMs,
+    lastSeenAtMs,
+    employee,
+    diasEnLavanderia,
+  };
 }
 
 // =====================
-// ✅ Cache: asegurar y GUARDAR en el Map del route padre
+// Cache
 // =====================
 async function ensureAnalysisCache(params: {
   tenantId: string;
@@ -222,30 +284,46 @@ async function ensureAnalysisCache(params: {
 
   const cached = __getAnalysisCache(tenantId) as CacheEntry | undefined;
   const now = Date.now();
+
   if (cached && now - cached.ts < ttlSeconds * 1000) {
     return { entry: cached, cacheHit: true, scannedRaw: 0 };
   }
 
-  // Scan paginado (igual que analysis/route.ts)
   const assets: AnalysisAsset[] = [];
   let skip = 0;
   let guardSameFirstId = "";
   let scannedRaw = 0;
 
   while (assets.length < maxScan) {
-    const resp = await searchAssetsWithSession(params.sessionToken, {}, pageSize, skip, params.authHeader, tenantId);
-    const itemsRaw: any[] = Array.isArray((resp as any)?.assets) ? (resp as any).assets : [];
+    const resp = await searchAssetsWithSession(
+      params.sessionToken,
+      {},
+      pageSize,
+      skip,
+      params.authHeader,
+      tenantId
+    );
+
+    const itemsRaw: any[] = Array.isArray((resp as any)?.assets)
+      ? (resp as any).assets
+      : [];
     if (!itemsRaw.length) break;
 
     scannedRaw += itemsRaw.length;
 
-    const firstId = pickStr(itemsRaw[0]?._id, itemsRaw[0]?.id, itemsRaw[0]?.AssetTag, itemsRaw[0]?.tag);
+    const firstId = pickStr(
+      itemsRaw[0]?._id,
+      itemsRaw[0]?.id,
+      itemsRaw[0]?.AssetTag,
+      itemsRaw[0]?.tag
+    );
+
     if (firstId && firstId === guardSameFirstId) break;
     guardSameFirstId = firstId;
 
     for (const raw of itemsRaw) {
       const mapped = toAnalysisAsset(raw);
-      // analysis normal excluye retirados
+
       if (cleanStr(mapped.location) === RETIRED_LOCATION_ID) continue;
 
       assets.push(mapped);
@@ -260,7 +338,6 @@ async function ensureAnalysisCache(params: {
   }
 
   const entry: CacheEntry = { ts: Date.now(), assets };
-  // ✅ ahora sí: lo guardamos en el módulo padre (route.ts)
   __setAnalysisCache(tenantId, entry);
 
   return { entry, cacheHit: false, scannedRaw };
@@ -277,6 +354,7 @@ export async function POST(req: NextRequest) {
     if (!tenantHint) {
       return NextResponse.json({ ok: false, error: "Falta x-tenant-id." }, { status: 400 });
     }
+
     if (!sessionToken) {
       return NextResponse.json({ ok: false, error: "Falta sessionToken." }, { status: 401 });
     }
@@ -292,20 +370,21 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, error: "Falta mode." }, { status: 400 });
     }
 
-    // ========
-    // AGE / AGETIPO: usa cache (y si no hay, lo genera aquí y lo guarda)
-    // ========
+    const ttlSeconds = cleanNum(body?.ttlSeconds, 60);
+    const maxScan = cleanNum(body?.maxScan, 50_000);
+    const pageSize = cleanNum(body?.pageSize, 1000);
+
     if (mode === "age" || mode === "ageTipo") {
       if (!week || week < 1) {
         return NextResponse.json({ ok: false, error: "Falta week>=1." }, { status: 400 });
       }
-      if (mode === "ageTipo" && !tipo) {
-        return NextResponse.json({ ok: false, error: "Falta tipo para mode=ageTipo." }, { status: 400 });
-      }
 
-      const ttlSeconds = cleanNum(body?.ttlSeconds, 60);
-      const maxScan = cleanNum(body?.maxScan, 50_000);
-      const pageSize = cleanNum(body?.pageSize, 1000);
+      if (mode === "ageTipo" && !tipo) {
+        return NextResponse.json(
+          { ok: false, error: "Falta tipo para mode=ageTipo." },
+          { status: 400 }
+        );
+      }
 
       const { entry, cacheHit, scannedRaw } = await ensureAnalysisCache({
         tenantId: tenantHint,
@@ -329,19 +408,28 @@ export async function POST(req: NextRequest) {
         if (mode === "ageTipo") {
           return normalizeKey(cleanStr(a.tipo)) === tipoKey;
         }
+
         return true;
       });
 
-      filtered.sort((x, y) => Number(x.createdAtMs ?? 0) - Number(y.createdAtMs ?? 0));
-
-      const total = filtered.length;
-      const page = filtered.slice(skip, skip + limit);
+      const page = filtered
+        .sort((x, y) => Number(x.createdAtMs ?? 0) - Number(y.createdAtMs ?? 0))
+        .slice(skip, skip + limit)
+        .map((a) => {
+          const antiguedadDias = daysFromNow(a.createdAtMs);
+          return {
+            ...a,
+            antiguedadDias,
+            antiguedadSemanas:
+              antiguedadDias === null ? null : weekFromAgeDays(antiguedadDias),
+          };
+        });
 
       return NextResponse.json(
         {
           ok: true,
           items: page,
-          total,
+          total: filtered.length,
           limit,
           skip,
           meta: {
@@ -358,49 +446,78 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // ========
-    // CYCLES / INACTIVE: cloud paginado por tipo (rápido)
-    // ========
-    if ((mode === "cycles" || mode === "inactive") && !tipo) {
-      return NextResponse.json({ ok: false, error: "Falta tipo." }, { status: 400 });
+    if (mode === "cycles" || mode === "inactive") {
+      if (!tipo) {
+        return NextResponse.json({ ok: false, error: "Falta tipo." }, { status: 400 });
+      }
+
+      const { entry, cacheHit, scannedRaw } = await ensureAnalysisCache({
+        tenantId: tenantHint,
+        sessionToken,
+        authHeader,
+        ttlSeconds,
+        maxScan,
+        pageSize,
+      });
+
+      const tipoKey = normalizeKey(tipo);
+
+      const filtered = entry.assets.filter((a) => {
+        if (cleanStr(a.location) === RETIRED_LOCATION_ID) return false;
+        if (normalizeKey(cleanStr(a.tipo)) !== tipoKey) return false;
+
+        if (mode === "inactive") {
+          return isCreatedStatus(cleanStr(a.status));
+        }
+
+        return true;
+      });
+
+      const page = filtered
+        .sort((a, b) => {
+          if (mode === "inactive") {
+            return String(a.tag).localeCompare(String(b.tag), "es", {
+              numeric: true,
+              sensitivity: "base",
+            });
+          }
+
+          return Number(b.ciclosLavado || 0) - Number(a.ciclosLavado || 0);
+        })
+        .slice(skip, skip + limit)
+        .map((a) => {
+          const antiguedadDias = daysFromNow(a.createdAtMs);
+          return {
+            ...a,
+            antiguedadDias,
+            antiguedadSemanas:
+              antiguedadDias === null ? null : weekFromAgeDays(antiguedadDias),
+          };
+        });
+
+      return NextResponse.json(
+        {
+          ok: true,
+          items: page,
+          total: filtered.length,
+          limit,
+          skip,
+          meta: {
+            source: cacheHit ? "cache" : "scan",
+            cachedAt: entry.ts,
+            scanned: entry.assets.length,
+            scannedRaw,
+            mode,
+            tipo,
+          },
+        },
+        { status: 200 }
+      );
     }
-
-    const filters: Record<string, string> = {
-      AssetType: tipo,
-    };
-
-    // Inactive: pedimos created y luego filtramos para variantes (creado/nuevo)
-    if (mode === "inactive") {
-      filters["Status"] = "created";
-    }
-
-    const resp = await searchAssetsWithSession(sessionToken, filters, limit, skip, authHeader, tenantHint);
-    const itemsRaw: any[] = Array.isArray((resp as any)?.assets) ? (resp as any).assets : [];
-
-    const mapped: AnalysisAsset[] = itemsRaw
-      .map(toAnalysisAsset)
-      .filter((r) => cleanStr(r.location) !== RETIRED_LOCATION_ID)
-      .filter((r) => (mode !== "inactive" ? true : isCreatedStatus(cleanStr(r.status))));
-
-    // Nota: total del backend puede incluir cosas que luego filtramos (retirados/variantes)
-    const backendTotal = Number((resp as any)?.total ?? 0);
-    const totalApprox = backendTotal || mapped.length;
 
     return NextResponse.json(
-      {
-        ok: true,
-        items: mapped,
-        total: totalApprox,
-        limit,
-        skip,
-        meta: {
-          source: "cloud-search",
-          mode,
-          note:
-            "total puede ser aproximado si backend cuenta items que luego filtramos en server. Items sí están filtrados.",
-        },
-      },
-      { status: 200 }
+      { ok: false, error: `Mode no soportado: ${mode}` },
+      { status: 400 }
     );
   } catch (err: any) {
     return NextResponse.json(

@@ -64,6 +64,47 @@ function formatUnix(tsSecAny: any): string {
   }).format(d);
 }
 
+// ✅ NUEVO: resolver ubicación visual para que coincida con tus gráficas
+function resolveEstadoFromAsset(
+  a: any
+): "nuevos" | "lavanderia" | "circulacion" | null {
+  const loc = String(
+    a?.Location ?? a?.locationId ?? a?.raw?.Location ?? a?.raw?.locationId ?? ""
+  )
+    .trim()
+    .toLowerCase();
+
+  const st = String(
+    a?.status ?? a?.Status ?? a?.raw?.status ?? a?.raw?.Status ?? ""
+  )
+    .trim()
+    .toLowerCase();
+
+  if (loc === "nuevos" && st === "created") return "nuevos";
+  if (loc === "almacen" && st === "out") return "lavanderia";
+  if (loc === "almacen" && st === "in") return "circulacion";
+
+  return null;
+}
+
+function getUbicacionVisual(a: any): string {
+  const estado = resolveEstadoFromAsset(a);
+
+  if (estado === "lavanderia") return "Lavandería";
+  if (estado === "circulacion") return "Circulación";
+  if (estado === "nuevos") return "Nuevos";
+
+  return (
+    String(
+      a?.Location ??
+        a?.locationId ??
+        a?.raw?.Location ??
+        a?.raw?.locationId ??
+        "Sin ubicación"
+    ).trim() || "Sin ubicación"
+  );
+}
+
 export default function DashboardHome() {
   const router = useRouter();
 
@@ -122,7 +163,7 @@ export default function DashboardHome() {
         const headers: Record<string, string> = {
           "x-session-token": sessionToken,
           Authorization: `Bearer ${idToken}`,
-          "x-tenant-id": tenantId, // ✅ siempre
+          "x-tenant-id": tenantId,
         };
 
         // 1) Assets
@@ -251,7 +292,6 @@ export default function DashboardHome() {
       <AppHeader />
 
       <div className="mx-auto max-w-7xl px-4 py-6">
-        {/* Total de activos */}
         <div className="mb-6 rounded-md border bg-white px-6 py-5 text-center shadow-sm">
           <div className="text-xl font-semibold">Total de Activos</div>
 
@@ -300,7 +340,6 @@ export default function DashboardHome() {
                     <th className="py-2 pr-4">Nombre de Activo</th>
                     <th className="py-2 pr-4">Número RFID</th>
                     <th className="py-2 pr-4">Empleado Nombre</th>
-                    {/* 👉 Campos personalizados ANTES de Creado / Última vez vista */}
                     {allCustomFields.map((cf) => (
                       <th key={cf.key} className="py-2 pr-4">
                         {cf.label}
@@ -354,11 +393,8 @@ export default function DashboardHome() {
                         a.raw?.type ||
                         "-";
 
-                      const loc =
-                        a.Location ||
-                        a.locationId ||
-                        a.raw?.Location ||
-                        "-";
+                      // ✅ CAMBIO CLAVE
+                      const loc = getUbicacionVisual(a);
 
                       const createdTs =
                         a.Created || a.ts || a.raw?.Created || a.raw?.ts;
@@ -368,7 +404,6 @@ export default function DashboardHome() {
                         a.raw?.LastSeen ||
                         a.raw?.updatedAt;
 
-                      // ✅ FIX: formateo consistente (timezone fija)
                       const created = formatUnix(createdTs);
                       const lastSeen = formatUnix(lastSeenTs);
 
@@ -428,7 +463,6 @@ export default function DashboardHome() {
                             {a.PersonnelName || a.raw?.PersonnelName || "-"}
                           </td>
 
-                          {/* 👉 Valores de campos personalizados EN MEDIO */}
                           {allCustomFields.map((cf) => {
                             const rawVal = customFromAsset[cf.key];
                             const val =
@@ -458,7 +492,6 @@ export default function DashboardHome() {
               </table>
             </div>
 
-            {/* Footer tabla */}
             <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between text-xs text-neutral-700">
               <div className="flex items-center gap-2">
                 <span>Mostrar</span>
@@ -477,9 +510,8 @@ export default function DashboardHome() {
 
               <div className="flex items-center gap-3">
                 <span>
-                  Mostrando{" "}
-                  <span className="font-semibold">{fromRow || 0}</span> -{" "}
-                  <span className="font-semibold">{toRow || 0}</span> de{" "}
+                  Mostrando <span className="font-semibold">{fromRow || 0}</span>{" "}
+                  - <span className="font-semibold">{toRow || 0}</span> de{" "}
                   <span className="font-semibold">{totalActivos}</span> activos
                 </span>
 
@@ -512,7 +544,7 @@ export default function DashboardHome() {
       </div>
 
       <footer className="mx-auto max-w-7xl px-4 pb-8 pt-4 text-center text-xs text-neutral-500">
-        © 2025 · Dashboard demo
+        © 2025 · IDAPP
       </footer>
     </div>
   );

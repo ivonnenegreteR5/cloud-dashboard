@@ -31,34 +31,35 @@ function buildHeaders(req: NextRequest, idToken: string) {
     "Content-Type": "application/json",
     "Cache-Control": "no-store",
   };
+
   if (API_KEY) headers["x-api-key"] = API_KEY;
   if (tenantHint) headers["x-tenant-id"] = tenantHint;
   if (idToken) headers["Authorization"] = `Bearer ${idToken}`;
+
   return headers;
 }
 
-// ✅ Normaliza lo que venga del front a los 3 estados válidos del backend
-function mapEstado(raw: string) {
-  const e = cleanStr(raw).toLowerCase();
-  if (!e) return "";
-
-  // ya válidos
-  if (e === "nuevos" || e === "lavanderia" || e === "circulacion") return e;
-
-  // aliases típicos (lo que tú describes)
-  if (e === "creado" || e === "created" || e === "nuevo" || e === "nuevas") return "nuevos";
-  if (e === "salida" || e === "out" || e === "lavandería" || e === "lavanderia") return "lavanderia";
-  if (e === "entrada" || e === "in" || e === "circulación" || e === "circulacion") return "circulacion";
-
-  return e; // lo dejamos pasar para que el backend diga “inválido” si no coincide
+function norm(v: any) {
+  return String(v ?? "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
 }
 
-// ✅ genera variantes razonables para tipo (trim + colapsar espacios)
 function buildTipoVariants(tipo: string) {
   const t = cleanStr(tipo);
   if (!t) return [];
+
   const collapsed = t.replace(/\s+/g, " ").trim();
-  const variants = new Set<string>([t, collapsed]);
+
+  const variants = new Set<string>([
+    t,
+    collapsed,
+    t.toUpperCase(),
+    collapsed.toUpperCase(),
+  ]);
+
   return Array.from(variants).filter(Boolean);
 }
 
@@ -69,10 +70,11 @@ export async function POST(req: NextRequest) {
     const sessionToken = cleanStr(body?.sessionToken || body?.auth?.token);
     const idToken = cleanStr(body?.idToken);
 
-    const estado = mapEstado(body?.estado);
+    const globalTipo = body?.globalTipo === true;
+    const location = cleanStr(body?.location || body?.estado);
     const tipo = cleanStr(body?.tipo);
 
-    const limit = Math.max(1, Math.min(cleanNum(body?.limit, 100), 500));
+    const limit = Math.max(1, Math.min(cleanNum(body?.limit, 100), 5000));
     const skip = Math.max(0, cleanNum(body?.skip, 0));
 
     if (!sessionToken) {
@@ -81,12 +83,7 @@ export async function POST(req: NextRequest) {
         { status: 400 }
       );
     }
-    if (!estado) {
-      return NextResponse.json(
-        { status: 400, message: "Falta estado" },
-        { status: 400 }
-      );
-    }
+
     if (!tipo) {
       return NextResponse.json(
         { status: 400, message: "Falta tipo" },
@@ -94,12 +91,20 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const headers = buildHeaders(req, idToken);
+    // ✅ Para tabla de pastel/location sí se requiere location.
+    // ✅ Para tabla global/barra NO se requiere location.
+    if (!location && !globalTipo) {
+      return NextResponse.json(
+        { status: 400, message: "Falta location" },
+        { status: 400 }
+      );
+    }
 
-    // ✅ intenta con variantes de tipo si el primero regresa vacío
+    const headers = buildHeaders(req, idToken);
     const tipoVariants = buildTipoVariants(tipo);
 
     let lastData: any = null;
+    const locationNorm = norm(location);
 
     for (const t of tipoVariants) {
       const upstream = await fetch(`${BASE_URL}/api/v1/IdLinens/DetallePage`, {
@@ -107,7 +112,7 @@ export async function POST(req: NextRequest) {
         headers,
         body: JSON.stringify({
           auth: { token: sessionToken },
-          estado,
+          ...(location ? { location } : {}),
           tipo: t,
           limit,
           skip,
@@ -117,6 +122,7 @@ export async function POST(req: NextRequest) {
 
       const text = await upstream.text().catch(() => "");
       let data: any = null;
+
       try {
         data = text ? JSON.parse(text) : null;
       } catch {
@@ -126,7 +132,6 @@ export async function POST(req: NextRequest) {
       lastData = data;
 
       if (!upstream.ok) {
-        // error “real” del backend
         return NextResponse.json(
           {
             status: upstream.status,
@@ -137,21 +142,65 @@ export async function POST(req: NextRequest) {
         );
       }
 
-      // si ya trajo items, regresamos
-      if (data?.items?.length) {
-        return NextResponse.json(data, { status: 200 });
+      const items = Array.isArray(data?.items) ? data.items : [];
+
+      // ✅ MODO GLOBAL: no filtra location, regresa lo que manda el server.
+      if (globalTipo) {
+        if (items.length > 0 || Number(data?.total || 0) > 0) {
+          return NextResponse.json(
+            {
+              ...data,
+              tipo: t,
+              globalTipo: true,
+              items,
+              total: typeof data?.total === "number" ? data.total : items.length,
+            },
+            { status: 200 }
+          );
+        }
+
+        continue;
+      }
+
+      // ✅ MODO LOCATION: conserva filtro extra defensivo por location.
+      const filteredItems = items.filter((item: any) => {
+        const itemLocation =
+          cleanStr(item?.Location) ||
+          cleanStr(item?.locationId) ||
+          cleanStr(item?.location) ||
+          cleanStr(item?.ubicacion);
+
+        return norm(itemLocation) === locationNorm;
+      });
+
+      if (filteredItems.length > 0) {
+        return NextResponse.json(
+          {
+            ...data,
+            location,
+            tipo: t,
+            total:
+              typeof data?.total === "number" ? data.total : filteredItems.length,
+            items: filteredItems,
+          },
+          { status: 200 }
+        );
       }
     }
 
-    // si todos dieron ok pero vacío
     return NextResponse.json(
       {
         ...(lastData ?? { status: 0, items: [] }),
+        ...(location ? { location } : {}),
+        tipo,
+        ...(globalTipo ? { globalTipo: true } : {}),
         debug: {
           ...(lastData?.debug ?? {}),
           note:
             lastData?.debug?.note ||
-            "DetallePage regresó vacío. Revisa consistencia de campos en Firestore (AssetType/Location/status).",
+            (globalTipo
+              ? "DetallePage global por tipo regresó vacío. Revisa consistencia de AssetType."
+              : "DetallePage regresó vacío. Revisa consistencia de campos en Firestore (AssetType/Location)."),
         },
       },
       { status: 200 }

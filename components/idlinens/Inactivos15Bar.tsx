@@ -2,7 +2,6 @@
 "use client";
 
 import React, { useMemo, useCallback } from "react";
-import { useRouter } from "next/navigation";
 import {
   ResponsiveContainer,
   BarChart,
@@ -29,12 +28,6 @@ function canonTipo(v: any) {
   return compact.toUpperCase();
 }
 
-/**
- * Tick personalizado:
- * - fuente pequeña
- * - rotado
- * - con <title> para hover (texto completo)
- */
 function TickLabel(props: any) {
   const { x, y, payload } = props;
   const full = String(payload?.payload?.tipo ?? payload?.value ?? "");
@@ -70,8 +63,6 @@ export function Inactivos15Bar({
   selectedTipo?: string;
   onSelectTipo?: (tipo: string) => void;
 }) {
-  const router = useRouter();
-
   const safe = useMemo(() => {
     const arr = Array.isArray(data) ? data : [];
     return arr
@@ -93,8 +84,6 @@ export function Inactivos15Bar({
     [selectedTipo]
   );
 
-  // ✅ mostrar solo 1 de cada N labels para que se alcancen a ver “los numeritos”
-  // regla simple: si hay muchas barras, salta labels.
   const tickEvery = useMemo(() => {
     const n = safe.length;
     if (n <= 10) return 1;
@@ -104,20 +93,14 @@ export function Inactivos15Bar({
     return 5;
   }, [safe.length]);
 
-  const goToTipo = useCallback(
+  const handleSelect = useCallback(
     (tipo: string) => {
       const t = String(tipo || "").trim();
       if (!t) return;
-
-      if (onSelectTipo) return onSelectTipo(t);
-
-      router.push(
-        `/${tenantId}/idlinens/inactivos15?estado=${encodeURIComponent(
-          estado
-        )}&tipo=${encodeURIComponent(t)}`
-      );
+      if (!onSelectTipo) return;
+      onSelectTipo(t);
     },
-    [onSelectTipo, router, tenantId, estado]
+    [onSelectTipo]
   );
 
   return (
@@ -125,19 +108,17 @@ export function Inactivos15Bar({
       <ResponsiveContainer width="100%" height="100%">
         <BarChart
           data={safe}
-          // ✅ más espacio abajo para los labels rotados
           margin={{ top: 8, right: 10, left: 8, bottom: 110 }}
         >
           <CartesianGrid strokeDasharray="3 3" />
 
           <XAxis
             dataKey="label"
-            interval={tickEvery - 1} // ✅ 0 = todos, 1 = 1 sí / 1 no, etc.
+            interval={tickEvery - 1}
             height={110}
             tick={<TickLabel />}
           />
 
-          {/* ✅ números del eje Y más visibles */}
           <YAxis allowDecimals={false} width={52} tick={{ fontSize: 12 }} />
 
           <Tooltip
@@ -147,25 +128,14 @@ export function Inactivos15Bar({
             }
           />
 
-          <Bar
-            dataKey="total"
-            isAnimationActive={false}
-            onClick={(dataPoint: any, index: number) => {
-              const byIndex = safe?.[index]?.tipo;
-              if (byIndex) return goToTipo(byIndex);
-
-              const byPayload = String(
-                dataPoint?.payload?.tipo ?? dataPoint?.tipo ?? ""
-              );
-              if (byPayload) return goToTipo(byPayload);
-            }}
-          >
+          <Bar dataKey="total" isAnimationActive={false}>
             {safe.map((row, idx) => (
               <Cell
                 key={`${row.key}-${idx}`}
                 cursor="pointer"
                 strokeWidth={0}
                 opacity={selectedKey && row.key !== selectedKey ? 0.35 : 1}
+                onClick={() => handleSelect(row.tipo)}
               />
             ))}
           </Bar>

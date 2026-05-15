@@ -31,7 +31,6 @@ export function TipoBar({
   const router = useRouter();
 
   const safeData = useMemo(() => {
-    // Garantiza strings y permite mostrar tooltip completo
     return (data || []).map((d: any) => ({
       ...d,
       tipo: String(d?.tipo ?? ""),
@@ -49,15 +48,33 @@ export function TipoBar({
   return (
     <div className="rounded-lg border bg-white p-4">
       <div className="mb-2 text-base font-semibold">
-        Total de prendas (Nuevos + Circulación)
+        Total de prendas 
       </div>
 
-      {/* Más alto para bajar nombres y mejorar área de click */}
+      <div className="mb-3 flex flex-wrap gap-2 text-xs">
+        {safeData.map((d, idx) => {
+          const tipo = d.rawTipo ?? d.tipo;
+
+          return (
+            <button
+              key={`${tipo}-${idx}`}
+              type="button"
+              onClick={() => goToTipo(d)}
+              className="inline-flex items-center gap-2 rounded-full border px-2 py-1 hover:bg-neutral-50"
+              title="Ver tabla detalle"
+            >
+              <span className="inline-block h-3 w-5 rounded bg-neutral-800" />
+              <span className="text-neutral-800">{d.tipo}</span>
+              <span className="text-neutral-500">· {d.count}</span>
+            </button>
+          );
+        })}
+      </div>
+
       <div className="h-[520px]">
         <ResponsiveContainer width="100%" height="100%">
           <BarChart
             data={safeData}
-            // más bottom para que bajen labels; más left para que YAxis no se corte
             margin={{ top: 10, right: 10, left: 22, bottom: 120 }}
           >
             <CartesianGrid strokeDasharray="3 3" />
@@ -73,22 +90,17 @@ export function TipoBar({
             />
 
             <YAxis />
+
             <Tooltip
               formatter={(value: any) => [value, "Total"]}
               labelFormatter={(label: any) => String(label)}
             />
 
-            {/* Barra con mínimo visual para que SIEMPRE sea clickeable */}
-            <Bar
-              dataKey="count"
-              cursor="pointer"
-              minPointSize={6} // ✅ clave: hace visible/clickeable barras pequeñas
-            >
+            <Bar dataKey="count" cursor="pointer" minPointSize={6}>
               {safeData.map((row, idx) => (
                 <Cell
                   key={`cell-${idx}`}
                   cursor="pointer"
-                  // ✅ click por celda/barras: más confiable que onClick del Bar
                   onClick={() => goToTipo(row)}
                 />
               ))}
@@ -98,7 +110,7 @@ export function TipoBar({
       </div>
 
       <div className="mt-2 text-xs text-neutral-500">
-        Tip: toca una barra (tipo) para ver la tabla detalle.
+        Tip: toca una barra o un tipo del menú para ir al detalle.
       </div>
     </div>
   );

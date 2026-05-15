@@ -32,7 +32,7 @@ function hasApp(apps: string[], key: string) {
   return apps.some((x) => String(x || "").trim().toLowerCase() === k);
 }
 
-export function AppHeader() {
+export function AppHeader() { 
   const tenantId = useTenant() as string;
   const router = useRouter();
   const pathname = usePathname();
@@ -63,22 +63,49 @@ export function AppHeader() {
   // ✅ Apps habilitadas para este tenant (guardadas en login o superadmin select)
   const apps = useMemo(() => readAppsFromLocalStorage(), []);
   const showIdLinens = hasApp(apps, "idlinens");
+  const showInventory = hasApp(apps, "inventory");
 
   // 👉 Cerrar sesión y regresar al login
-  const handleLogout = () => {
-    localStorage.clear();
+ const handleLogout = () => {
+  try {
+    localStorage.removeItem("cloudSessionToken");
+    localStorage.removeItem("cloudIdToken");
+    localStorage.removeItem("cloudUserEmail");
+    localStorage.removeItem("cloudTenantId");
+    localStorage.removeItem("cloudUserRole");
+    localStorage.removeItem("cloudIsSuperAdmin");
+    localStorage.removeItem("cloudApps");
+    localStorage.removeItem("cloudTenantName");
+    localStorage.removeItem("cloudTenantLogoUrl");
+    localStorage.removeItem("cloudTenantTheme");
+    localStorage.removeItem("cloudLastTenant");
+    localStorage.removeItem("cloudSelectedTenantId");
+
     sessionStorage.clear();
-    router.push("/login");
-  };
+
+    document.cookie =
+      "cloudSelectedTenantId=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+    document.cookie =
+      "cloudApps=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+  } catch {
+    // ignore
+  }
+
+  router.replace("/login");
+};
 
   return (
     <header className="border-b bg-white">
       {/* Barra superior */}
       <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-3">
-        <span className="text-xl font-semibold tracking-tight">Cloud API</span>
+       <img
+  src="/IDApp.png"
+  alt="IDAPP"
+  className="mb-8 w-25 h-auto object-contain"
+/>
 
         <div className="flex items-center gap-3">
-          <span className="text-sm text-neutral-600">Cliente:</span>
+          <span className="text-sm text-neutral-600"></span>
           <span className="rounded-md border bg-neutral-50 px-3 py-1 text-sm">
             {tenantId}
           </span>
@@ -95,7 +122,7 @@ export function AppHeader() {
       variant="outline"
       className="justify-between gap-2 bg-white px-5 py-2 text-sm shadow-sm"
     >
-      <span className="font-semibold">Menú</span>
+      <span className="font-semibold">Menú principal</span>
       <ChevronDown className="h-4 w-4" />
     </Button>
   </DropdownMenuTrigger>
@@ -171,6 +198,33 @@ export function AppHeader() {
         <DropdownMenuSeparator />
       </>
     )}
+
+    {showInventory && (
+  <>
+    <DropdownMenuSeparator />
+
+    <DropdownMenuItem
+      className={
+        `
+        font-semibold text-neutral-900
+        bg-neutral-50
+        hover:bg-neutral-200
+        focus:bg-neutral-200
+        border border-neutral-300
+        mx-2 my-1 rounded-md
+        ` +
+        (isActive(`${base}/inventory`)
+          ? " bg-neutral-900 text-white hover:bg-neutral-900"
+          : "")
+      }
+      onClick={() => go(`${base}/inventory`)}
+    >
+      Inventory
+    </DropdownMenuItem>
+
+    <DropdownMenuSeparator />
+  </>
+)}
   </DropdownMenuContent>
 </DropdownMenu>
 
@@ -182,7 +236,7 @@ export function AppHeader() {
                 variant="outline"
                 className="justify-between gap-2 bg-white px-5 py-2 text-sm shadow-sm"
               >
-                <span className="font-semibold">Menú principal</span>
+                <span className="font-semibold">Menú de usuario</span>
                 <ChevronDown className="h-4 w-4" />
               </Button>
             </DropdownMenuTrigger>
@@ -214,6 +268,20 @@ export function AppHeader() {
                   >
                     Alta de Usuarios
                   </DropdownMenuItem>
+
+              {showIdLinens && (
+
+                <DropdownMenuItem
+                  className={
+                  isActive(`${base}/blancos`)
+                  ? "bg-neutral-100 font-semibold"
+                   : ""
+                  }
+                onClick={() => go(`${base}/blancos`)}
+         >
+        Agregar Blancos
+      </DropdownMenuItem>
+    )}
 
                   <DropdownMenuItem
                     className={

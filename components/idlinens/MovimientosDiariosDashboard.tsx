@@ -146,7 +146,6 @@ export default function MovimientosDiariosDashboard({ tenantId }: { tenantId: st
                   <Legend />
                   <Bar dataKey="in" />
                   <Bar dataKey="out" />
-                  <Bar dataKey="created" />
                 </BarChart>
               </ResponsiveContainer>
             </div>

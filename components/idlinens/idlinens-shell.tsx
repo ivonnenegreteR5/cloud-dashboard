@@ -14,7 +14,8 @@ import {
   Package,
   Clock4,
   BarChart3,
-  ChevronRight,
+  ArchiveX,
+  Home,
 } from "lucide-react";
 
 type NavItem = {
@@ -124,7 +125,7 @@ export function IdLinensShell({
   const mainMenuHref = `/${safeTenant}`;
 
   // ✅ en desktop: rail colapsado/expandido
-  const [sidebarExpanded, setSidebarExpanded] = useState(false);
+  const [sidebarExpanded, setSidebarExpanded] = useState(true);
 
   // ✅ en móvil: drawer overlay
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -163,11 +164,11 @@ export function IdLinensShell({
         href: `${base}/analysis`,
       },
       {
-        key: "retirados",
-        label: "Retirados de Inventario",
-        icon: <ChevronRight className="h-6 w-6" />,
-        href: `${base}/retirados`,
-      },
+  key: "retirados",
+  label: "Retirados de Inventario",
+  icon: <ArchiveX className="h-6 w-6" />,
+  href: `${base}/retirados`,
+},
     ],
     [base]
   );
@@ -285,7 +286,7 @@ export function IdLinensShell({
                   className="grid h-14 w-14 place-items-center rounded-2xl text-neutral-700 hover:bg-neutral-100"
                   onClick={() => setMobileOpen(false)}
                 >
-                  <ChevronRight className="h-6 w-6" />
+                 <Home className="h-6 w-6" />
                 </Link>
               </li>
             ) : (
@@ -296,7 +297,7 @@ export function IdLinensShell({
                   onClick={() => setMobileOpen(false)}
                 >
                   <span className="grid h-10 w-10 place-items-center rounded-lg bg-neutral-100 text-neutral-900">
-                    <ChevronRight className="h-6 w-6" />
+                    <Home className="h-6 w-6" />
                   </span>
                   <span className="leading-5">Regresar al menú principal</span>
                 </Link>
@@ -376,21 +377,6 @@ export function IdLinensShell({
                   {tenantName || safeTenant.toUpperCase()}
                 </div>
                 <div className="truncate text-sm text-neutral-500">{title}</div>
-              </div>
-
-              {/* RIGHT */}
-              <div className="flex items-center justify-end gap-3">
-                <div className="hidden w-[520px] items-center gap-2 rounded-full border bg-neutral-50 px-4 py-2 md:flex">
-                  <Search className="h-4 w-4 text-neutral-500" />
-                  <input
-                    className="w-full bg-transparent text-sm outline-none placeholder:text-neutral-500"
-                    placeholder={`Search ${activeLabel}`}
-                  />
-                </div>
-
-                <div className="grid h-10 w-10 place-items-center rounded-full bg-neutral-900 text-white font-semibold">
-                  I
-                </div>
               </div>
             </div>
           </div>

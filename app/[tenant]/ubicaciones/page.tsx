@@ -60,10 +60,7 @@ export default function UbicacionesListPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // ✅ Admin full (admin / admin_location / superadmin)
   const [isAdmin, setIsAdmin] = useState(false);
-
-  // UI state borrar
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -123,7 +120,6 @@ export default function UbicacionesListPage() {
         throw new Error(data?.error || data?.message || "No se pudo borrar");
       }
 
-      // ✅ quita de la lista (optimista)
       setUbicaciones((prev) => prev.filter((x) => x.id !== loc.id));
     } catch (e: any) {
       console.error(e);
@@ -134,104 +130,107 @@ export default function UbicacionesListPage() {
   };
 
   useEffect(() => {
-  if (!tenantId) {
-    setUbicaciones([]);
-    setError("Tenant no válido. Vuelve a iniciar sesión.");
-    setLoading(false);
-    return;
-  }
-
-  const sessionToken = localStorage.getItem("cloudSessionToken");
-  const idToken = localStorage.getItem("cloudIdToken");
-
-  if (!sessionToken || !idToken) {
-    setUbicaciones([]);
-    setError("Sesión no válida, vuelve a iniciar sesión.");
-    setLoading(false);
-    return;
-  }
-
-  const load = async () => {
-    try {
-      setLoading(true);
-      setError(null);
-
-      const locationsUrl = `/api/cloud/locations?limit=500&tenantId=${encodeURIComponent(
-        tenantId
-      )}`;
-
-      const commonHeaders = {
-        "x-session-token": sessionToken,
-        Authorization: `Bearer ${idToken}`,
-        "x-tenant-id": tenantId,
-      };
-
-      const locationsResp = await fetch(locationsUrl, {
-        headers: commonHeaders,
-      });
-
-      if (!locationsResp.ok) {
-        const errorText = await locationsResp.text().catch(() => "");
-        throw new Error(
-          `Error ${locationsResp.status} al cargar ubicaciones: ${errorText}`
-        );
-      }
-
-      const data = await locationsResp.json();
-
-      // Extraemos el array correcto
-      let locationsArray: any[] = [];
-
-      if (Array.isArray(data.locations)) {
-        locationsArray = data.locations;
-      } else if (Array.isArray(data.items)) {
-        locationsArray = data.items;
-      } else if (Array.isArray(data)) {
-        locationsArray = data;
-      } else {
-        throw new Error("La respuesta no contiene un array de ubicaciones válido");
-      }
-
-      const result: Ubicacion[] = [];
-
-      for (const loc of locationsArray) {
-        // Usamos directamente los campos planos si existen
-        let locId = String(loc.id || loc._id || "").trim();
-        let nombre = String(loc.name || loc.Name || "").trim();
-        let descripcion = String(
-          loc.description ||
-          loc.descripcion ||
-          loc.raw?.description ||
-          (loc.active === false ? "Ubicación inactiva." : "")
-        ).trim();
-
-        // Fallback si no hay nombre → usamos id
-        if (!nombre) nombre = locId;
-
-        if (!locId) continue;
-
-        const total = Number(loc.totalAssets ?? loc.raw?.totalAssets ?? 0);
-
-        result.push({
-          id: locId,
-          nombre: nombre || locId,
-          descripcion: descripcion || undefined,
-          totalAssets: total,
-        });
-      }
-
-      setUbicaciones(result);
-    } catch (err: any) {
-      console.error("Error al cargar ubicaciones:", err);
-      setError(err.message || "Error al cargar ubicaciones");
+    if (!tenantId) {
       setUbicaciones([]);
-    } finally {
+      setError("Tenant no válido. Vuelve a iniciar sesión.");
       setLoading(false);
+      return;
     }
-  };
 
-  load();
-}, [tenantId]);
+    const sessionToken = localStorage.getItem("cloudSessionToken");
+    const idToken = localStorage.getItem("cloudIdToken");
+
+    if (!sessionToken || !idToken) {
+      setUbicaciones([]);
+      setError("Sesión no válida, vuelve a iniciar sesión.");
+      setLoading(false);
+      return;
+    }
+
+    const load = async () => {
+      try {
+        setLoading(true);
+        setError(null);
+
+        const locationsUrl = `/api/cloud/locations?limit=500&tenantId=${encodeURIComponent(
+          tenantId
+        )}`;
+
+        const commonHeaders = {
+          "x-session-token": sessionToken,
+          Authorization: `Bearer ${idToken}`,
+          "x-tenant-id": tenantId,
+        };
+
+        const locationsResp = await fetch(locationsUrl, {
+          headers: commonHeaders,
+        });
+
+        if (!locationsResp.ok) {
+          const errorText = await locationsResp.text().catch(() => "");
+          throw new Error(
+            `Error ${locationsResp.status} al cargar ubicaciones: ${errorText}`
+          );
+        }
+
+        const data = await locationsResp.json();
+
+        let locationsArray: any[] = [];
+
+        if (Array.isArray(data.locations)) {
+          locationsArray = data.locations;
+        } else if (Array.isArray(data.items)) {
+          locationsArray = data.items;
+        } else if (Array.isArray(data)) {
+          locationsArray = data;
+        } else {
+          throw new Error(
+            "La respuesta no contiene un array de ubicaciones válido"
+          );
+        }
+
+        const result: Ubicacion[] = [];
+
+        for (const loc of locationsArray) {
+          const locId = String(loc.id || loc._id || "").trim();
+          let nombre = String(
+            loc.name || loc.Name || firstNonEmpty(loc.raw?.name, loc.raw?.Name)
+          ).trim();
+
+          const descripcion = String(
+            loc.description ||
+              loc.descripcion ||
+              loc.raw?.description ||
+              (loc.active === false ? "Ubicación inactiva." : "")
+          ).trim();
+
+          if (!nombre) nombre = locId;
+          if (!locId) continue;
+
+          const total = Number(loc.totalAssets ?? loc.raw?.totalAssets ?? 0);
+
+          result.push({
+            id: locId,
+            nombre: nombre || locId,
+            descripcion: descripcion || undefined,
+            totalAssets: total,
+          });
+        }
+
+        result.sort((a, b) => a.nombre.localeCompare(b.nombre, "es"));
+
+        setUbicaciones(result);
+      } catch (err: any) {
+        console.error("Error al cargar ubicaciones:", err);
+        setError(err.message || "Error al cargar ubicaciones");
+        setUbicaciones([]);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    load();
+  }, [tenantId]);
 
   return (
     <div className="min-h-screen w-full bg-neutral-50 text-neutral-900">
@@ -305,7 +304,9 @@ export default function UbicacionesListPage() {
                       {u.descripcion}
                     </p>
                   ) : (
-                    <p className="text-neutral-500">Sin descripción registrada.</p>
+                    <p className="text-neutral-500">
+                      Sin descripción registrada.
+                    </p>
                   )}
 
                   <p className="text-xs text-neutral-600">

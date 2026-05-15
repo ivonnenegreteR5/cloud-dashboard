@@ -1342,3 +1342,147 @@ export async function cleanupAssetsCustomKeys(params: {
 
   return resp.json();
 }
+
+export async function cloudListAppBlancos(
+  tenantId: string,
+  sessionToken: string,
+  authHeader?: string,
+  tenantIdHint?: string
+) {
+  if (!tenantId) throw new Error("tenantId requerido");
+  if (!sessionToken) throw new Error("sessionToken requerido");
+
+  const url = `${BASE_URL}/api/v1/AppBlancos`;
+
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    "x-session-token": sessionToken,
+    "x-tenant-id": tenantId,
+  };
+
+  if (authHeader) headers.Authorization = authHeader;
+
+  const res = await fetch(url, {
+    method: "GET",
+    headers: withTenantHeader(headers, tenantIdHint || tenantId),
+  });
+
+  const text = await res.text();
+  let data: any = {};
+  try {
+    data = text ? JSON.parse(text) : {};
+  } catch {
+    data = { raw: text };
+  }
+
+  if (!res.ok || (data?.status !== undefined && data.status !== 0)) {
+    throw new Error(
+      data?.message ||
+        data?.error ||
+        data?.raw ||
+        `Error HTTP ${res.status} en AppBlancos`
+    );
+  }
+
+  return data;
+}
+
+export async function cloudUpsertAppBlancos(args: {
+  tenantId: string;
+  sessionToken: string;
+  authHeader?: string;
+  tenantIdHint?: string;
+  items: Array<{ name: string }>;
+}) {
+  const { tenantId, sessionToken, authHeader, tenantIdHint, items } = args;
+
+  if (!tenantId) throw new Error("tenantId requerido");
+  if (!sessionToken) throw new Error("sessionToken requerido");
+  if (!items?.length) throw new Error("items[] requerido");
+
+  const url = `${BASE_URL}/api/v1/AppBlancos/Update`;
+
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    "x-session-token": sessionToken,
+    "x-tenant-id": tenantId,
+  };
+
+  if (authHeader) headers.Authorization = authHeader;
+
+  const res = await fetch(url, {
+    method: "POST",
+    headers: withTenantHeader(headers, tenantIdHint || tenantId),
+    body: JSON.stringify({ items }),
+  });
+
+  const text = await res.text();
+  let data: any = {};
+  try {
+    data = text ? JSON.parse(text) : {};
+  } catch {
+    data = { raw: text };
+  }
+
+  if (!res.ok || (data?.status !== undefined && data.status !== 0)) {
+    throw new Error(
+      data?.message ||
+        data?.error ||
+        data?.raw ||
+        `Error HTTP ${res.status} en AppBlancos/Update`
+    );
+  }
+
+  return data;
+}
+
+
+
+export async function cloudDeleteAppBlancos(args: {
+  tenantId: string;
+  sessionToken: string;
+  authHeader?: string;
+  tenantIdHint?: string;
+  items: Array<{ id?: string; name?: string }>;
+}) {
+  const { tenantId, sessionToken, authHeader, tenantIdHint, items } = args;
+
+  if (!tenantId) throw new Error("tenantId requerido");
+  if (!sessionToken) throw new Error("sessionToken requerido");
+  if (!items?.length) throw new Error("items[] requerido");
+
+  const url = `${BASE_URL}/api/v1/AppBlancos/Delete`;
+
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    "x-session-token": sessionToken,
+    "x-tenant-id": tenantId,
+  };
+
+  if (authHeader) headers.Authorization = authHeader;
+
+  const res = await fetch(url, {
+    method: "POST",
+    headers: withTenantHeader(headers, tenantIdHint || tenantId),
+    body: JSON.stringify({ items }),
+  });
+
+  const text = await res.text();
+  let data: any = {};
+  try {
+    data = text ? JSON.parse(text) : {};
+  } catch {
+    data = { raw: text };
+  }
+
+  if (!res.ok || (data?.status !== undefined && data.status !== 0)) {
+    throw new Error(
+      data?.message ||
+        data?.error ||
+        data?.raw ||
+        `Error HTTP ${res.status} en AppBlancos/Delete`
+    );
+  }
+
+  return data;
+}

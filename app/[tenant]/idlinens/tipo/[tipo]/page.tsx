@@ -5,22 +5,16 @@ import React, { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { IdLinensShell } from "@/components/idlinens/idlinens-shell";
 import { DetalleTable } from "@/components/idlinens/DetalleTable";
-import { fetchDetallePage, type DetalleRow, type EstadoKey } from "@/components/idlinens/api";
-
-// ✅ Solo los estados que queremos mostrar aquí (mezcla)
-type Estado2 = Extract<EstadoKey, "nuevos" | "circulacion">;
-
-function label(estado: Estado2) {
-  return estado === "nuevos" ? "Nuevos" : "Circulación";
-}
-
-type EstadoMeta2 = Record<Estado2, { total: number; loaded: number }>;
+import * as XLSX from "xlsx";
+import {
+  fetchDetalleTipoGlobalPage,
+  type DetalleRow,
+} from "@/components/idlinens/api";
 
 export default function IdLinensTipoPage() {
   const router = useRouter();
-
-  // ✅ leer tenant y tipo desde la URL
   const params = useParams<{ tenant?: string; tipo?: string }>();
+
   const tenantId = String(params?.tenant || "").trim();
 
   const tipo = useMemo(() => {
@@ -32,57 +26,34 @@ export default function IdLinensTipoPage() {
     }
   }, [params?.tipo]);
 
-  const siteTitle = "Distribución de prendas";
-
   const [rows, setRows] = useState<DetalleRow[]>([]);
+  const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [downloadingExcel, setDownloadingExcel] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  // ✅ progreso separado para nuevos y circulación
-  const [meta, setMeta] = useState<EstadoMeta2>({
-    nuevos: { total: 0, loaded: 0 },
-    circulacion: { total: 0, loaded: 0 },
-  });
+  const PAGE_SIZE = 200;
+  const EXPORT_PAGE_SIZE = 5000;
 
-  const canLoadMore = useMemo(() => {
-    return (
-      meta.nuevos.loaded < meta.nuevos.total ||
-      meta.circulacion.loaded < meta.circulacion.total
-    );
-  }, [meta]);
-
-  // Solo informativo para el header
-  const currentPhase = useMemo(() => {
-    if (meta.nuevos.loaded < meta.nuevos.total) return label("nuevos");
-    if (meta.circulacion.loaded < meta.circulacion.total) return label("circulacion");
-    return "Fin";
-  }, [meta]);
+  const canLoadMore = rows.length < total;
 
   async function loadFirst() {
     setLoading(true);
     setErr(null);
     setRows([]);
-
-    setMeta({
-      nuevos: { total: 0, loaded: 0 },
-      circulacion: { total: 0, loaded: 0 },
-    });
+    setTotal(0);
 
     try {
-      // ✅ trae ambos estados desde el inicio
-      const [pNuevos, pCirc] = await Promise.all([
-        fetchDetallePage(tenantId, "nuevos", tipo, 200, 0),
-        fetchDetallePage(tenantId, "circulacion", tipo, 200, 0),
-      ]);
+      const page = await fetchDetalleTipoGlobalPage(
+        tenantId,
+        tipo,
+        PAGE_SIZE,
+        0
+      );
 
-      // ✅ muestra ambos juntos (bloque: nuevos + circulación)
-      setRows([...pNuevos.rows, ...pCirc.rows]);
-
-      setMeta({
-        nuevos: { total: pNuevos.total, loaded: pNuevos.rows.length },
-        circulacion: { total: pCirc.total, loaded: pCirc.rows.length },
-      });
+      setRows(page.rows);
+      setTotal(page.total);
     } catch (e: any) {
       setErr(String(e?.message || e));
     } finally {
@@ -92,55 +63,87 @@ export default function IdLinensTipoPage() {
 
   async function loadMore() {
     if (loadingMore || !canLoadMore) return;
+
     setLoadingMore(true);
+    setErr(null);
 
     try {
-      // ✅ sigue paginando: termina nuevos primero, luego circulación
-      if (meta.nuevos.loaded < meta.nuevos.total) {
-        const page = await fetchDetallePage(
-          tenantId,
-          "nuevos",
-          tipo,
-          200,
-          meta.nuevos.loaded
-        );
+      const page = await fetchDetalleTipoGlobalPage(
+        tenantId,
+        tipo,
+        PAGE_SIZE,
+        rows.length
+      );
 
-        setRows((prev) => [...prev, ...page.rows]);
-
-        setMeta((m) => ({
-          ...m,
-          nuevos: {
-            total: page.total,
-            loaded: m.nuevos.loaded + page.rows.length,
-          },
-        }));
-        return;
-      }
-
-      if (meta.circulacion.loaded < meta.circulacion.total) {
-        const page = await fetchDetallePage(
-          tenantId,
-          "circulacion",
-          tipo,
-          200,
-          meta.circulacion.loaded
-        );
-
-        setRows((prev) => [...prev, ...page.rows]);
-
-        setMeta((m) => ({
-          ...m,
-          circulacion: {
-            total: page.total,
-            loaded: m.circulacion.loaded + page.rows.length,
-          },
-        }));
-        return;
-      }
+      setRows((prev) => [...prev, ...page.rows]);
+      setTotal(page.total);
     } catch (e: any) {
       setErr(String(e?.message || e));
     } finally {
       setLoadingMore(false);
+    }
+  }
+
+  async function descargarExcelCompleto() {
+    if (downloadingExcel) return;
+
+    setDownloadingExcel(true);
+    setErr(null);
+
+    try {
+      const allRows: DetalleRow[] = [];
+      let skip = 0;
+      let remoteTotal = total;
+
+      while (true) {
+        const page = await fetchDetalleTipoGlobalPage(
+          tenantId,
+          tipo,
+          EXPORT_PAGE_SIZE,
+          skip
+        );
+
+        allRows.push(...page.rows);
+        remoteTotal = page.total;
+        skip += page.rows.length;
+
+        if (!page.rows.length || skip >= page.total) break;
+      }
+
+      const data = allRows.map((r) => ({
+        "Tipo de blancos": r.tipo ?? "",
+        "Número RFID": r.tag ?? "",
+        "Visto por última vez": r.vistoUltimaVez ?? "",
+        "Ciclos de lavado": r.ciclosLavado ?? 0,
+        Creado: r.creado ?? "",
+        "Antigüedad (días)": r.antiguedadDias ?? 0,
+        Ubicación: r.ubicacion ?? "",
+        "Días en Lavandería": r.diasLavanderia ?? 0,
+        Estado: r.estado ?? "",
+      }));
+
+      const ws = XLSX.utils.json_to_sheet(data);
+      const wb = XLSX.utils.book_new();
+
+      XLSX.utils.book_append_sheet(wb, ws, "Prendas");
+
+      const safeTipo =
+        tipo
+          .trim()
+          .toLowerCase()
+          .normalize("NFD")
+          .replace(/[\u0300-\u036f]/g, "")
+          .replace(/[^a-z0-9]+/g, "-")
+          .replace(/(^-|-$)/g, "") || "tipo";
+
+      XLSX.writeFile(
+        wb,
+        `distribucion-prendas-${safeTipo}-${remoteTotal}.xlsx`
+      );
+    } catch (e: any) {
+      setErr(String(e?.message || e));
+    } finally {
+      setDownloadingExcel(false);
     }
   }
 
@@ -150,17 +153,19 @@ export default function IdLinensTipoPage() {
       setLoading(false);
       return;
     }
+
     if (!tipo) {
       setErr("Tipo inválido");
       setLoading(false);
       return;
     }
+
     loadFirst();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tenantId, tipo]);
 
   return (
-    <IdLinensShell tenantId={tenantId} title={siteTitle}>
+    <IdLinensShell tenantId={tenantId} title="Distribución de prendas">
       <div className="mb-3 flex flex-wrap items-center gap-2 text-sm text-neutral-600">
         <button
           type="button"
@@ -175,7 +180,7 @@ export default function IdLinensTipoPage() {
         <span className="text-neutral-900">Tipo: {tipo}</span>
 
         <span className="text-neutral-500">
-          (mostrando {rows.length} · {currentPhase})
+          mostrando {rows.length} de {total}
         </span>
       </div>
 
@@ -191,21 +196,37 @@ export default function IdLinensTipoPage() {
         </div>
       ) : (
         <>
-          <DetalleTable rows={rows} />
+          <DetalleTable
+            rows={rows}
+            onDownloadAll={descargarExcelCompleto}
+          />
 
-          <div className="mt-3 flex items-center justify-between">
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
             <div className="text-xs text-neutral-500">
-              Se carga paginado (Nuevos + Circulación) para que abra rápido.
+              Esta tabla es exclusiva de la gráfica de barras.
             </div>
 
-            <button
-              type="button"
-              onClick={loadMore}
-              disabled={!canLoadMore || loadingMore}
-              className="rounded-md border px-3 py-2 text-sm disabled:opacity-50 hover:bg-neutral-50"
-            >
-              {loadingMore ? "Cargando…" : canLoadMore ? "Cargar más" : "Fin"}
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={descargarExcelCompleto}
+                disabled={downloadingExcel || total === 0}
+                className="rounded-md border px-3 py-2 text-sm hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {downloadingExcel
+                  ? "Descargando Excel…"
+                  : `Descargar Excel completo (${total})`}
+              </button>
+
+              <button
+                type="button"
+                onClick={loadMore}
+                disabled={!canLoadMore || loadingMore}
+                className="rounded-md border px-3 py-2 text-sm hover:bg-neutral-50 disabled:opacity-50"
+              >
+                {loadingMore ? "Cargando…" : canLoadMore ? "Cargar más" : "Fin"}
+              </button>
+            </div>
           </div>
         </>
       )}

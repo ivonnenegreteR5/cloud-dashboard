@@ -31,6 +31,23 @@ function pickJwt(req: Request, body: any) {
   return "";
 }
 
+function normalizeEstado(value: any) {
+  const estado = String(value || "todos").trim().toLowerCase();
+  return estado || "todos";
+}
+
+function normalizeLimit(value: any) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 1000;
+  return Math.max(1, Math.min(n, 10000));
+}
+
+function normalizeSkip(value: any) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 0;
+  return Math.max(0, n);
+}
+
 export async function POST(req: Request) {
   try {
     const tenantId = pickTenant(req);
@@ -53,12 +70,11 @@ export async function POST(req: Request) {
       return NextResponse.json({ message: "Missing sessionToken" }, { status: 401 });
     }
 
-    const estado = body?.estado ?? "todos";
+    const estado = normalizeEstado(body?.estado);
     const tipo = String(body?.tipo || "").trim();
-    const limit = Number(body?.limit ?? 25);
-    const skip = Number(body?.skip ?? 0);
+    const limit = normalizeLimit(body?.limit);
+    const skip = normalizeSkip(body?.skip);
 
-    // 🔁 AJUSTA este path igual que el otro, según tu backend real
     const upstreamPath = "/api/v1/IdLinens/Inactivos15/DetallePage";
 
     const upstream = await fetch(`${BASE_URL}${upstreamPath}`, {
@@ -66,7 +82,7 @@ export async function POST(req: Request) {
       headers: {
         "Content-Type": "application/json",
         "x-tenant-id": tenantId,
-        Authorization: jwt, // ✅ ESTO evita el "Jwt is missing"
+        Authorization: jwt,
       },
       body: JSON.stringify({
         auth: { token: sessionToken },
@@ -79,6 +95,7 @@ export async function POST(req: Request) {
     });
 
     const text = await upstream.text().catch(() => "");
+
     if (!upstream.ok) {
       return NextResponse.json(
         { message: `Upstream error (${upstream.status}): ${text || "sin detalle"}` },
@@ -86,9 +103,18 @@ export async function POST(req: Request) {
       );
     }
 
-    const data = text ? JSON.parse(text) : null;
+    let data: any = null;
+    try {
+      data = text ? JSON.parse(text) : null;
+    } catch {
+      data = { raw: text };
+    }
+
     return NextResponse.json(data);
   } catch (e: any) {
-    return NextResponse.json({ message: e?.message || "Error" }, { status: 500 });
+    return NextResponse.json(
+      { message: e?.message || "Error" },
+      { status: 500 }
+    );
   }
 }

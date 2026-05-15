@@ -1,6 +1,6 @@
- //app/api/idlinens/resumen-tipo/route.ts
+// app/api/idlinens/resumen-tipos/route.ts
 
- import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
 
@@ -35,32 +35,21 @@ function buildHeaders(req: NextRequest, idToken: string) {
   return headers;
 }
 
-/**
- * Normaliza para que el frontend siempre reciba:
- * { items: [{ tipo, count, rawTipo? }], ... }
- */
 function normalizeResumenTiposResponse(data: any) {
   const items = Array.isArray(data)
     ? data
     : Array.isArray(data?.items)
-    ? data.items
-    : [];
+      ? data.items
+      : [];
 
-  // Asegura forma uniforme y conserva rawTipo
   const normalizedItems = items.map((it: any) => {
-    const rawTipo = cleanStr(it?.tipo);
+    const rawTipo = cleanStr(it?.rawTipo || it?.tipo);
     return {
-      ...it,
-      tipo: rawTipo,      // dejamos el tipo original tal cual
-      rawTipo: rawTipo,   // duplicado útil para frontend (click → detalle)
+      tipo: rawTipo,
+      rawTipo,
       count: Number(it?.count || 0),
     };
   });
-
-  // Si el backend ya trae estructura, respetamos pero garantizamos items
-  if (data && typeof data === "object" && !Array.isArray(data)) {
-    return { ...data, items: normalizedItems };
-  }
 
   return { items: normalizedItems };
 }
@@ -71,7 +60,7 @@ export async function POST(req: NextRequest) {
 
     const sessionToken = cleanStr(body?.sessionToken || body?.auth?.token);
     const idToken = cleanStr(body?.idToken);
-    const estado = cleanStr(body?.estado).toLowerCase();
+    const location = cleanStr(body?.location || body?.estado);
 
     if (!sessionToken) {
       return NextResponse.json(
@@ -79,9 +68,10 @@ export async function POST(req: NextRequest) {
         { status: 400 }
       );
     }
-    if (!estado) {
+
+    if (!location) {
       return NextResponse.json(
-        { status: 400, message: "Falta estado" },
+        { status: 400, message: "Falta location" },
         { status: 400 }
       );
     }
@@ -91,12 +81,16 @@ export async function POST(req: NextRequest) {
     const upstream = await fetch(`${BASE_URL}/api/v1/IdLinens/ResumenTipos`, {
       method: "POST",
       headers,
-      body: JSON.stringify({ auth: { token: sessionToken }, estado }),
+      body: JSON.stringify({
+        auth: { token: sessionToken },
+        location,
+      }),
       cache: "no-store",
     });
 
     const text = await upstream.text().catch(() => "");
     let data: any = null;
+
     try {
       data = text ? JSON.parse(text) : null;
     } catch {
@@ -107,14 +101,13 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(
         {
           status: upstream.status,
-          message: "Error consultando ResumenTipos",
+          message: "Error consultando ResumenTipos por location",
           details: data ?? text,
         },
         { status: upstream.status }
       );
     }
 
-    // ✅ normaliza output
     const normalized = normalizeResumenTiposResponse(data);
     return NextResponse.json(normalized, { status: 200 });
   } catch (err: any) {

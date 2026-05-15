@@ -9,16 +9,7 @@ import { DetalleTable } from "@/components/idlinens/DetalleTable";
 import {
   fetchDetallePage,
   type DetalleRow,
-  type EstadoKey,
 } from "@/components/idlinens/api";
-
-function label(estado: EstadoKey) {
-  return estado === "nuevos"
-    ? "Nuevos"
-    : estado === "lavanderia"
-    ? "Lavandería"
-    : "Circulación";
-}
 
 function safeDecode(s: string) {
   try {
@@ -28,28 +19,20 @@ function safeDecode(s: string) {
   }
 }
 
-/**
- * ✅ IMPORTANTE (newest-first):
- * Tus DetalleRow trae `creado` y `vistoUltimaVez` como string (locale),
- * así que NO conviene parsear con Date si viene como "dd/mm/aaaa".
- * Mejor ordenamos de forma robusta:
- *  - intentamos usar timestamp si existe
- *  - si no, ordenamos por `vistoUltimaVez` como fallback
- *  - y si todo falla, dejamos el orden del backend
- */
 function tryDateMs(v: any): number {
   if (!v) return 0;
   if (typeof v === "number") return v > 10_000_000_000 ? v : v * 1000;
 
   const s = String(v).trim();
-  if (!s) return 0;
+  if (!s || s === "-") return 0;
 
-  // ISO (2026-02-04T...)
   const iso = Date.parse(s);
   if (!Number.isNaN(iso)) return iso;
 
-  // dd/mm/yyyy o dd-mm-yyyy (muy común por toLocaleDateString)
-  const m = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})(?:\s+(\d{1,2}):(\d{2}))?$/);
+  const m = s.match(
+    /^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})(?:\s+(\d{1,2}):(\d{2}))?$/
+  );
+
   if (m) {
     const dd = Number(m[1]);
     const mm = Number(m[2]);
@@ -66,21 +49,77 @@ function tryDateMs(v: any): number {
 
 function sortNewestFirst(list: DetalleRow[]) {
   return [...list].sort((a: any, b: any) => {
-    // Primero intenta por `creado` (más sentido para "últimas agregadas")
-    const aCre = tryDateMs(a?.creado);
-    const bCre = tryDateMs(b?.creado);
-    if (aCre || bCre) return bCre - aCre;
-
-    // Si no se puede, usa `vistoUltimaVez`
     const aVis = tryDateMs(a?.vistoUltimaVez);
     const bVis = tryDateMs(b?.vistoUltimaVez);
     if (aVis || bVis) return bVis - aVis;
 
-    // Último recurso: estable por _id (si el backend usa ObjectId, esto suele correlacionar con tiempo)
+    const aCre = tryDateMs(a?.creado);
+    const bCre = tryDateMs(b?.creado);
+    if (aCre || bCre) return bCre - aCre;
+
     const aId = String(a?._id ?? "");
     const bId = String(b?._id ?? "");
     return bId.localeCompare(aId);
   });
+}
+
+function excelEscape(v: unknown) {
+  return String(v ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+function csvEscape(v: unknown) {
+  const s = String(v ?? "").replace(/"/g, '""');
+  return `"${s}"`;
+}
+
+function downloadRowsAsExcel(rows: DetalleRow[], fileName: string) {
+  const headers = [
+    "Tipo de blancos",
+    "Número RFID",
+    "Visto por última vez",
+    "Ciclos de lavado",
+    "Creado",
+    "Ubicación",
+    "Días en Lavandería",
+    "Estado",
+  ];
+
+  const lines = [
+    headers.map(csvEscape).join(","),
+    ...rows.map((r) =>
+      [
+        r.tipo,
+        r.tag ?? "",
+        r.vistoUltimaVez,
+        r.ciclosLavado,
+        r.creado,
+        r.ubicacion ?? "",
+        r.diasLavanderia,
+        r.estado ?? "",
+      ]
+        .map(csvEscape)
+        .join(",")
+    ),
+  ];
+
+  const blob = new Blob(["\uFEFF" + lines.join("\n")], {
+    type: "text/csv;charset=utf-8;",
+  });
+
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+
+  a.href = url;
+  a.download = fileName.replace(/\.xls$/i, ".csv").replace(/\.xlsx$/i, ".csv");
+
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+
+  URL.revokeObjectURL(url);
 }
 
 export default function IdLinensEstadoTipoPage() {
@@ -88,8 +127,8 @@ export default function IdLinensEstadoTipoPage() {
   const router = useRouter();
   const params = useParams<{ estado?: string; tipo?: string }>();
 
-  const estado = String(params?.estado || "").toLowerCase() as EstadoKey;
-  const tipo = safeDecode(String(params?.tipo || ""));
+  const location = safeDecode(String(params?.estado || "")).trim();
+  const tipo = safeDecode(String(params?.tipo || "")).trim();
 
   const siteTitle = "ID Linens - HA Chihuahua";
 
@@ -97,6 +136,7 @@ export default function IdLinensEstadoTipoPage() {
   const [total, setTotal] = useState<number>(0);
   const [loading, setLoading] = useState<boolean>(true);
   const [loadingMore, setLoadingMore] = useState<boolean>(false);
+  const [downloading, setDownloading] = useState<boolean>(false);
   const [err, setErr] = useState<string | null>(null);
 
   const canLoadMore = useMemo(() => rows.length < total, [rows.length, total]);
@@ -108,7 +148,7 @@ export default function IdLinensEstadoTipoPage() {
     setTotal(0);
 
     try {
-      const page = await fetchDetallePage(tenantId, estado, tipo, 200, 0);
+      const page = await fetchDetallePage(tenantId, location, tipo, 200, 0);
       setRows(sortNewestFirst(page.rows));
       setTotal(page.total);
     } catch (e: any) {
@@ -120,10 +160,19 @@ export default function IdLinensEstadoTipoPage() {
 
   async function loadMore() {
     if (loadingMore || !canLoadMore) return;
+
     setLoadingMore(true);
+
     try {
-      const page = await fetchDetallePage(tenantId, estado, tipo, 200, rows.length);
-      setRows((p) => sortNewestFirst([...p, ...page.rows]));
+      const page = await fetchDetallePage(
+        tenantId,
+        location,
+        tipo,
+        200,
+        rows.length
+      );
+
+      setRows((prev) => sortNewestFirst([...prev, ...page.rows]));
       setTotal(page.total);
     } catch (e: any) {
       setErr(String(e?.message || e));
@@ -132,38 +181,88 @@ export default function IdLinensEstadoTipoPage() {
     }
   }
 
+  async function handleDownloadAll() {
+    if (downloading) return;
+
+    setDownloading(true);
+    setErr(null);
+
+    try {
+      let allRows: DetalleRow[] = [];
+      let skip = 0;
+      const limit = 1000;
+
+      while (true) {
+        const page = await fetchDetallePage(
+          tenantId,
+          location,
+          tipo,
+          limit,
+          skip
+        );
+
+        allRows = [...allRows, ...page.rows];
+
+        if (allRows.length >= page.total || page.rows.length === 0) break;
+
+       skip += page.rows.length;
+      }
+
+      const finalRows = sortNewestFirst(allRows);
+      const fecha = new Date().toISOString().slice(0, 10);
+
+     downloadRowsAsExcel(finalRows, `detalle-${location}-${tipo}-${fecha}.csv`);
+    } catch (e: any) {
+      setErr(String(e?.message || e));
+    } finally {
+      setDownloading(false);
+    }
+  }
+
   useEffect(() => {
-    // ✅ evita requests con tenant vacío o aún no cargado
     if (!tenantId) return;
 
-    if (!["nuevos", "lavanderia", "circulacion"].includes(estado)) {
-      setErr("Estado inválido");
+    if (!location) {
+      setRows([]);
+      setTotal(0);
+      setErr("Ubicación inválida");
       setLoading(false);
       return;
     }
+
     if (!tipo) {
+      setRows([]);
+      setTotal(0);
       setErr("Tipo inválido");
       setLoading(false);
       return;
     }
+
     loadFirst();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tenantId, estado, tipo]);
+  }, [tenantId, location, tipo]);
 
   return (
     <IdLinensShell tenantId={tenantId} title={siteTitle}>
       <div className="mb-3 flex flex-wrap items-center gap-2 text-sm text-neutral-600">
         <button
           type="button"
-          onClick={() => router.push(`/${tenantId}/idlinens/estado/${estado}`)}
+          onClick={() =>
+            router.push(
+              `/${tenantId}/idlinens/estado/${encodeURIComponent(location)}`
+            )
+          }
           className="rounded-md px-2 py-1 hover:bg-neutral-100"
         >
           ← Volver
         </button>
+
         <span>·</span>
+
         <span className="text-neutral-900">
-          {label(estado)} · {tipo}
+          {location} · {tipo}
         </span>
+
         <span className="text-neutral-500">
           ({rows.length}
           {total ? ` / ${total}` : ""})
@@ -182,16 +281,29 @@ export default function IdLinensEstadoTipoPage() {
         </div>
       ) : (
         <>
+          <div className="mb-3 flex justify-end">
+            <button
+              type="button"
+              onClick={handleDownloadAll}
+              disabled={downloading || total === 0}
+              className="rounded-md border px-3 py-2 text-sm hover:bg-neutral-50 disabled:opacity-50"
+            >
+              {downloading ? "Preparando Excel…" : `Descargar Excel`}
+            </button>
+          </div>
+
           <DetalleTable rows={rows} />
+
           <div className="mt-3 flex items-center justify-between">
             <div className="text-xs text-neutral-500">
               Se carga paginado para que abra rápido.
             </div>
+
             <button
               type="button"
               onClick={loadMore}
               disabled={!canLoadMore || loadingMore}
-              className="rounded-md border px-3 py-2 text-sm disabled:opacity-50 hover:bg-neutral-50"
+              className="rounded-md border px-3 py-2 text-sm hover:bg-neutral-50 disabled:opacity-50"
             >
               {loadingMore ? "Cargando…" : canLoadMore ? "Cargar más" : "Fin"}
             </button>

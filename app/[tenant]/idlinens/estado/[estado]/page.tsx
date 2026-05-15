@@ -1,3 +1,4 @@
+// app/[tenant]/idlinens/estado/[estado]/page.tsx
 "use client";
 
 import React, { useEffect, useState } from "react";
@@ -5,22 +6,18 @@ import { useParams, useRouter } from "next/navigation";
 import { useTenant } from "@/components/tenant-context";
 import { IdLinensShell } from "@/components/idlinens/idlinens-shell";
 import { TipoPie } from "@/components/idlinens/TipoPie";
-import { fetchResumenTipos, type EstadoKey, type TipoResumen } from "@/components/idlinens/api";
-
-function label(estado: EstadoKey) {
-  return estado === "nuevos"
-    ? "Nuevos"
-    : estado === "lavanderia"
-    ? "Lavandería"
-    : "Circulación";
-}
+import {
+  fetchResumenTipos,
+  type TipoResumen,
+} from "@/components/idlinens/api";
 
 export default function IdLinensEstadoPage() {
   const tenantId = useTenant();
   const router = useRouter();
   const params = useParams<{ estado?: string }>();
 
-  const estado = String(params?.estado || "").toLowerCase() as EstadoKey;
+  // aunque la carpeta siga llamándose [estado], ahora la usamos como location
+  const location = decodeURIComponent(String(params?.estado || "")).trim();
 
   const siteTitle = "ID Linens - HA Chihuahua";
 
@@ -29,22 +26,30 @@ export default function IdLinensEstadoPage() {
 
   useEffect(() => {
     let alive = true;
+
     setTipos(null);
     setErr(null);
 
-    if (!["nuevos", "lavanderia", "circulacion"].includes(estado)) {
-      setErr("Estado inválido");
+    if (!location) {
+      setErr("Ubicación inválida");
       return;
     }
 
-    fetchResumenTipos(tenantId, estado)
-      .then((t) => alive && setTipos(t))
-      .catch((e) => alive && setErr(String(e?.message || e)));
+    // ✅ Usa el endpoint rápido basado en stats/rebuild
+    fetchResumenTipos(tenantId, location)
+      .then((t) => {
+        if (!alive) return;
+        setTipos(t);
+      })
+      .catch((e: unknown) => {
+        if (!alive) return;
+        setErr(e instanceof Error ? e.message : String(e));
+      });
 
     return () => {
       alive = false;
     };
-  }, [tenantId, estado]);
+  }, [tenantId, location]);
 
   return (
     <IdLinensShell tenantId={tenantId} title={siteTitle}>
@@ -56,8 +61,12 @@ export default function IdLinensEstadoPage() {
         >
           ← Volver
         </button>
+
         <span>·</span>
-        <span className="text-neutral-900">Detalle por tipo: {label(estado)}</span>
+
+        <span className="text-neutral-900">
+          Detalle por tipo: {location || "Ubicación"}
+        </span>
       </div>
 
       {err && (
@@ -71,7 +80,7 @@ export default function IdLinensEstadoPage() {
           Cargando gráfica…
         </div>
       ) : (
-        <TipoPie tenantId={tenantId} estado={estado} data={tipos} />
+        <TipoPie tenantId={tenantId} location={location} data={tipos} />
       )}
     </IdLinensShell>
   );

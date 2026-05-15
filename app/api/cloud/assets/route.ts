@@ -162,11 +162,37 @@ export async function GET(req: Request) {
       return next;
     });
 
+  const sortedItems = [...cleanedItems].sort((a: any, b: any) => {
+  const va =
+    Number(
+      a?.LastSeen ??
+      a?.raw?.LastSeen ??
+      a?.lastSeen ??
+      a?.raw?.lastSeen ??
+      a?.updatedAt ??
+      a?.raw?.updatedAt ??
+      0
+    ) || 0;
+
+  const vb =
+    Number(
+      b?.LastSeen ??
+      b?.raw?.LastSeen ??
+      b?.lastSeen ??
+      b?.raw?.lastSeen ??
+      b?.updatedAt ??
+      b?.raw?.updatedAt ??
+      0
+    ) || 0;
+
+  return vb - va;
+});
+
     return withNoStore(
       NextResponse.json(
         {
           ok: true,
-          assets: cleanedItems,
+          assets: sortedItems,
           total,
           limit: safeLimit,
           skip: safeSkip,

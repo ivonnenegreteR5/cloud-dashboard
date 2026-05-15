@@ -200,7 +200,7 @@ export default function TransactionsPage() {
                   <tr className="border-b bg-neutral-100 text-left text-xs uppercase tracking-wide text-neutral-600">
                     <th className="py-2 pr-4">Tipo</th>
                     <th className="py-2 pr-4">Ubicación</th>
-                    <th className="py-2 pr-4">Etiqueta (EPC)</th>
+                    <th className="py-2 pr-4">Etiqueta </th>
                     <th className="py-2 pr-4">Empleado</th>
                     <th className="py-2 pr-4">Fecha</th>
                   </tr>

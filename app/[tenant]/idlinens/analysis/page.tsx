@@ -1,4 +1,4 @@
-// app/[tenant]/idlinens/analysis/page.tsx
+
 // app/[tenant]/idlinens/analysis/page.tsx
 "use client";
 
@@ -137,138 +137,138 @@ export default function AnalysisPage() {
           </div>
         ) : null}
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          {/* 1) Ciclos por categoría */}
-          <div className="rounded-2xl border bg-white p-4">
-            <div className="text-sm font-medium text-neutral-900">
-              Promedio de Ciclos de Lavado por Categoría
-            </div>
+       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+  {/* 1) Ciclos por categoría */}
+  <div className="rounded-2xl border bg-white p-4">
+    <div className="text-sm font-medium text-neutral-900">
+      Promedio de Ciclos de Lavado por Categoría
+    </div>
 
-            {/* ✅ scroll horizontal para muchas categorías */}
-            <div className="mt-3 h-[320px] overflow-x-auto">
-              <div style={{ width: ciclosChartW, height: 320 }}>
-                <BarChart
-                  width={ciclosChartW}
-                  height={320}
-                  data={ciclosPorTipo}
-                  margin={{ top: 12, right: 16, left: 0, bottom: 85 }}
-                >
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis
-                    dataKey="tipo"
-                    interval={0}
-                    angle={-35}
-                    textAnchor="end"
-                    height={95}
-                    tick={axisTick}
-                    tickFormatter={(v) => trunc(String(v), 18)}
-                  />
-                  <YAxis tick={axisTick} />
-                  <Tooltip content={<TooltipBox />} />
-                  <Bar
-                    dataKey="value"
-                    onClick={(d: any) => {
-                      const tipo = String(d?.tipo || "");
-                      router.push(
-                        `/${tenantId}/idlinens/analysis/cycles?tipo=${encodeURIComponent(tipo)}`
-                      );
-                    }}
-                  >
-                    {ciclosPorTipo.map((_, idx) => (
-                      <Cell key={idx} className="cursor-pointer" fill="#10B981" />
-                    ))}
-                  </Bar>
-                </BarChart>
-              </div>
-            </div>
-          </div>
+    <div className="mt-3 overflow-x-auto">
+  <div style={{ width: ciclosChartW }}>
+       <BarChart
+  width={ciclosChartW}
+  height={600}
+          data={ciclosPorTipo}
+         margin={{ top: 12, right: 16, left: 0, bottom: 90 }}
+        >
+          <CartesianGrid strokeDasharray="3 3" />
+          <XAxis
+            dataKey="tipo"
+            interval={0}
+            angle={-45}
+            textAnchor="end"
+            height={120}
+            tick={{ ...axisTick, dy: 18 }}
+            tickFormatter={(v) => trunc(String(v), 16)}
+          />
+          <YAxis tick={axisTick} />
+          <Tooltip content={<TooltipBox />} />
+          <Bar
+            dataKey="value"
+            onClick={(d: any) => {
+              const tipo = String(d?.tipo || "");
+              router.push(
+                `/${tenantId}/idlinens/analysis/cycles?tipo=${encodeURIComponent(tipo)}`
+              );
+            }}
+          >
+            {ciclosPorTipo.map((_, idx) => (
+              <Cell key={idx} className="cursor-pointer" fill="#10B981" />
+            ))}
+          </Bar>
+        </BarChart>
+      </div>
+    </div>
+  </div>
 
-          {/* 2) Antigüedad por semana */}
-          <div className="rounded-2xl border bg-white p-4">
-            <div className="text-sm font-medium text-neutral-900">
-              Antigüedad por semana
-            </div>
+  {/* 2) Antigüedad por semana */}
+  <div className="rounded-2xl border bg-white p-4">
+    <div className="text-sm font-medium text-neutral-900">
+      Antigüedad por semana
+    </div>
 
-            <div className="mt-3 h-[320px]">
-              {/* ✅ aquí normalmente son pocas barras, sin scroll */}
-              <BarChart
-                width={640}
-                height={320}
-                data={antigPorSemana}
-                margin={{ top: 12, right: 16, left: 0, bottom: 18 }}
-              >
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="week" tick={axisTick} />
-                <YAxis tick={axisTick} />
-                <Tooltip content={<TooltipBox />} />
-                <Bar
-                  dataKey="count"
-                  onClick={(d: any) => {
-                    const week = Number(d?.week || 1);
-                    router.push(`/${tenantId}/idlinens/analysis/age?week=${week}`);
-                  }}
-                >
-                  {antigPorSemana.map((_, idx) => (
-                    <Cell key={idx} className="cursor-pointer" fill="#2563EB" />
-                  ))}
-                </Bar>
-              </BarChart>
+    <div className="mt-3 h-[320px]">
+      <BarChart
+        width={640}
+        height={320}
+        data={antigPorSemana}
+        margin={{ top: 12, right: 16, left: 0, bottom: 18 }}
+      >
+        <CartesianGrid strokeDasharray="3 3" />
+        <XAxis dataKey="week" tick={axisTick} />
+        <YAxis tick={axisTick} />
+        <Tooltip content={<TooltipBox />} />
+        <Bar
+          dataKey="count"
+          onClick={(d: any) => {
+            const week = Number(d?.week || 1);
+            router.push(`/${tenantId}/idlinens/analysis/age?week=${week}`);
+          }}
+        >
+          {antigPorSemana.map((_, idx) => (
+            <Cell key={idx} className="cursor-pointer" fill="#2563EB" />
+          ))}
+        </Bar>
+      </BarChart>
 
-              {!loading && antigPorSemana.length === 0 ? (
-                <div className="mt-2 text-xs text-neutral-500">
-                  No hay datos de antigüedad (revisa que el endpoint esté detectando CreatedAt/createdAt/creado).
-                </div>
-              ) : null}
-            </div>
-          </div>
-
-          {/* 3) Sin actividad por categoría */}
-          <div className="rounded-2xl border bg-white p-4 lg:col-span-1">
-            <div className="text-sm font-medium text-neutral-900">
-              Prendas sin actividad por categoría
-            </div>
-
-            {/* ✅ scroll horizontal para muchas categorías */}
-            <div className="mt-3 h-[320px] overflow-x-auto">
-              <div style={{ width: inactiveChartW, height: 320 }}>
-                <BarChart
-                  width={inactiveChartW}
-                  height={320}
-                  data={sinActividadPorTipo}
-                  margin={{ top: 12, right: 16, left: 0, bottom: 85 }}
-                >
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis
-                    dataKey="tipo"
-                    interval={0}
-                    angle={-35}
-                    textAnchor="end"
-                    height={95}
-                    tick={axisTick}
-                    tickFormatter={(v) => trunc(String(v), 18)}
-                  />
-                  <YAxis tick={axisTick} />
-                  <Tooltip content={<TooltipBox />} />
-                  <Bar
-                    dataKey="value"
-                    onClick={(d: any) => {
-                      const tipo = String(d?.tipo || "");
-                      router.push(
-                        `/${tenantId}/idlinens/analysis/inactive?tipo=${encodeURIComponent(tipo)}`
-                      );
-                    }}
-                  >
-                    {sinActividadPorTipo.map((_, idx) => (
-                      <Cell key={idx} className="cursor-pointer" fill="#2563EB" />
-                    ))}
-                  </Bar>
-                </BarChart>
-              </div>
-            </div>
-          </div>
-
-          <div className="hidden lg:block" />
+      {!loading && antigPorSemana.length === 0 ? (
+        <div className="mt-2 text-xs text-neutral-500">
+          No hay datos de antigüedad (revisa que el endpoint esté detectando CreatedAt/createdAt/creado).
         </div>
+      ) : null}
+    </div>
+  </div>
+
+  {/* 3) Sin actividad por categoría */}
+  <div className="rounded-2xl border bg-white p-4 lg:col-span-1">
+    <div className="text-sm font-medium text-neutral-900">
+      Prendas sin actividad por categoría
+    </div>
+<div className="mt-3 overflow-x-auto">
+  <div style={{ width: inactiveChartW }}>
+    <BarChart
+      width={inactiveChartW}
+      height={500}
+      data={sinActividadPorTipo}
+      margin={{ top: 12, right: 16, left: 0, bottom: 90 }}
+    >
+      <CartesianGrid strokeDasharray="3 3" />
+
+      <XAxis
+        dataKey="tipo"
+        interval={0}
+        angle={-45}
+        textAnchor="end"
+        height={120}
+        tick={{ ...axisTick, dy: 10 }}
+        tickFormatter={(v) => trunc(String(v), 16)}
+      />
+
+      <YAxis tick={axisTick} />
+
+      <Tooltip content={<TooltipBox />} />
+
+      <Bar
+        dataKey="value"
+        onClick={(d: any) => {
+          const tipo = String(d?.tipo || "");
+          router.push(
+            `/${tenantId}/idlinens/analysis/inactive?tipo=${encodeURIComponent(tipo)}`
+          );
+        }}
+      >
+        {sinActividadPorTipo.map((_, idx) => (
+          <Cell key={idx} className="cursor-pointer" fill="#2563EB" />
+        ))}
+      </Bar>
+    </BarChart>
+  </div>
+</div>
+  </div>
+
+  <div className="hidden lg:block" />
+</div>
       </div>
     </IdLinensShell>
   );

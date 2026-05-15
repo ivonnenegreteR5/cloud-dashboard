@@ -1,6 +1,7 @@
 // app/layout.tsx
 import "./globals.css";
 import type { Metadata } from "next";
+import SessionExpiredGuard from "@/components/session-expired-guard";
 
 export const metadata: Metadata = {
   title: "Cloud API Dashboard",
@@ -15,6 +16,7 @@ export default function RootLayout({
   return (
     <html lang="es">
       <body className="min-h-screen bg-neutral-50 text-neutral-900">
+        <SessionExpiredGuard />
         {children}
       </body>
     </html>

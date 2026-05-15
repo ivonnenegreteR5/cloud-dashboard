@@ -72,7 +72,7 @@ export type AnalysisSummary = {
     scannedRaw?: number;
     truncated?: boolean;
     cacheHit?: boolean;
-    ttlSeconds?: number;
+    ttlSeconds?: number; 
     maxScan?: number;
     pageSize?: number;
   };
@@ -352,19 +352,46 @@ export async function fetchAnalysisSummary(
   tenantId: string,
   opts?: { ttlSeconds?: number; maxScan?: number; pageSize?: number }
 ): Promise<AnalysisSummary> {
-  const data = await postStats<any>(tenantId, "/api/idlinens/analysis", {
-    ttlSeconds: opts?.ttlSeconds ?? 60,
-    maxScan: opts?.maxScan ?? 50000,
-    pageSize: opts?.pageSize ?? 1000,
-  });
+  const [analysisData, promedioData, nuevosCreatedData] = await Promise.all([
+    postStats<any>(tenantId, "/api/idlinens/analysis", {
+      ttlSeconds: opts?.ttlSeconds ?? 60,
+      maxScan: opts?.maxScan ?? 50000,
+      pageSize: opts?.pageSize ?? 1000,
+    }),
+    postStats<any>(tenantId, "/api/idlinens/promedio-ciclos-por-categoria", {}),
+    postStats<any>(tenantId, "/api/idlinens/inactivos-nuevos-created/resumen", {
+      days: 15,
+    }),
+  ]);
 
-  const unwrapped = unwrapOk<any>(data);
+  const analysis = unwrapOk<any>(analysisData);
+
+  const promedioItems = Array.isArray(promedioData?.items)
+    ? promedioData.items
+    : [];
+
+  const nuevosCreatedItems = Array.isArray(nuevosCreatedData?.items)
+    ? nuevosCreatedData.items
+    : [];
 
   return {
-    cyclesByType: Array.isArray(unwrapped?.cyclesByType) ? unwrapped.cyclesByType : [],
-    ageByWeek: Array.isArray(unwrapped?.ageByWeek) ? unwrapped.ageByWeek : [],
-    inactiveByType: Array.isArray(unwrapped?.inactiveByType) ? unwrapped.inactiveByType : [],
-    meta: unwrapped?.meta,
+    cyclesByType: promedioItems.map((x: any) => ({
+      tipo: String(x?.tipo || ""),
+      totalCycles: Number(x?.promedio || 0),
+    })),
+
+    ageByWeek: Array.isArray(analysis?.ageByWeek) ? analysis.ageByWeek : [],
+
+    inactiveByType: nuevosCreatedItems.map((x: any) => ({
+      tipo: String(x?.tipo || ""),
+      count: Number(x?.count || 0),
+    })),
+
+    meta: {
+      ...(analysis?.meta || {}),
+      promedioCiclosUpdatedAt: promedioData?.updatedAt || null,
+      nuevosCreatedUpdatedAt: nuevosCreatedData?.updatedAt || null,
+    },
   };
 }
 
@@ -506,6 +533,49 @@ export async function retireAssetToRetirados(tenantId: string, tag: string) {
   if (!resp.ok) throw new Error(`Update error (${resp.status}): ${txt || "sin detalle"}`);
   return data;
 }
+export async function retireAssetsToRetirados(
+  tenantId: string,
+  rows: Array<{ tag?: string; _id?: string }>
+) {
+  const { sessionToken, idToken } = getAuthTokens();
+  if (!sessionToken) throw new Error("No hay sessionToken (cloudSessionToken) en localStorage");
+
+  const headers = buildHeaders(tenantId);
+
+  const items = rows
+    .map((r) => ({
+      tag: String(r.tag || r._id || "").trim(),
+      locationId: "Blancos Retirados",
+    }))
+    .filter((x) => x.tag);
+
+  if (!items.length) throw new Error("No hay prendas válidas para retirar");
+
+  const resp = await fetch("/api/cloud/assets/update", {
+    method: "POST",
+    headers,
+    credentials: "include",
+    body: JSON.stringify({
+      sessionToken,
+      idToken,
+      items,
+    }),
+    cache: "no-store",
+  });
+
+  const txt = await resp.text().catch(() => "");
+  let data: any = null;
+
+  try {
+    data = txt ? JSON.parse(txt) : null;
+  } catch {
+    data = txt;
+  }
+
+  if (!resp.ok) throw new Error(`Update error (${resp.status}): ${txt || "sin detalle"}`);
+
+  return data;
+}
 
 /** ---------------------------
  *  Detalle page (resumen / tablas existentes)
@@ -519,17 +589,23 @@ type DetallePageResp = {
 
 async function postDetallePage(params: {
   tenantId: string;
-  estado: EstadoKey;
+  location?: string;
   tipo: string;
   limit?: number;
   skip?: number;
+  globalTipo?: boolean;
 }): Promise<{ items: RawAsset[]; total: number; limit: number; skip: number }> {
-  const r = await postStats<DetallePageResp>(params.tenantId, "/api/idlinens/detalle-page", {
-    estado: params.estado,
-    tipo: params.tipo,
-    limit: params.limit,
-    skip: params.skip,
-  });
+  const r = await postStats<DetallePageResp>(
+  params.tenantId,
+  "/api/idlinens/detalle-page",
+ {
+  ...(params.location ? { location: params.location } : {}),
+  ...(params.globalTipo ? { globalTipo: true } : {}),
+  tipo: params.tipo,
+  limit: params.limit,
+  skip: params.skip,
+}
+);
 
   const items = Array.isArray((r as any)?.items) ? ((r as any).items as RawAsset[]) : [];
   const total = typeof (r as any)?.total === "number" ? (r as any).total : items.length;
@@ -626,11 +702,121 @@ function toUbicacion(a: RawAsset) {
 }
 
 function toStatus(a: RawAsset) {
-  return toStr(a.Status) || toStr(a.status) || "";
+  return (
+    toStr((a as any).estado) ||
+    toStr(a.status) ||
+    toStr(a.Status) ||
+    ""
+  );
+}
+
+function estadoDisplay(a: RawAsset) {
+  const raw = toStatus(a);
+  const n = norm(raw);
+
+  if (n === "in" || n === "checked in" || n === "entrada" || n === "check in") {
+    return "Check in";
+  }
+
+  if (n === "out" || n === "checked out" || n === "salida" || n === "check out") {
+    return "Check out";
+  }
+
+  if (n === "created" || n === "creado") {
+    return "created";
+  }
+
+  return raw || "Sin estado";
 }
 
 function toEmpleado(a: RawAsset) {
-  return toStr(a.employee) || toStr(a.empleado) || "";
+  return (
+    toStr((a as any).employee) ||
+    toStr((a as any).empleado) ||
+    toStr((a as any).PersonnelName) ||
+    toStr((a as any).personnelName) ||
+    toStr((a as any).x_employee) ||
+    toStr((a as any).lastCheckOutBy) ||
+    toStr((a as any).lastCheckInBy) ||
+    ""
+  );
+}
+function toEpochMs(v: any): number | null {
+  if (v === null || v === undefined || v === "") return null;
+
+  if (typeof v === "number") {
+    return v > 10_000_000_000 ? v : v * 1000;
+  }
+
+  const s = String(v).trim();
+  if (!s) return null;
+
+  const n = Number(s);
+  if (Number.isFinite(n)) {
+    return n > 10_000_000_000 ? n : n * 1000;
+  }
+
+  const d = new Date(s);
+  if (!Number.isNaN(d.getTime())) return d.getTime();
+
+  return null;
+}
+
+function formatDateMx(v: any) {
+  const ms = toEpochMs(v);
+  if (!ms) return "";
+  return new Date(ms).toLocaleString("es-MX", {
+    timeZone: "America/Mexico_City",
+  });
+}
+
+function getCreatedMs(a: RawAsset): number | null {
+  return (
+    toEpochMs((a as any).Created) ??
+    toEpochMs((a as any).createdAt) ??
+    toEpochMs((a as any).CreatedAt) ??
+    toEpochMs((a as any).creado) ??
+    toEpochMs((a as any).custom?.Created) ??
+    toEpochMs((a as any).custom?.createdAt) ??
+    toEpochMs((a as any).custom?.CreatedAt) ??
+    null
+  );
+}
+
+function getLastSeenMs(a: RawAsset): number | null {
+  return (
+    toEpochMs((a as any).LastSeen) ??
+    toEpochMs((a as any).lastSeen) ??
+    toEpochMs((a as any).LastSeenAt) ??
+    toEpochMs((a as any).lastSeenAt) ??
+    toEpochMs((a as any).last_seen_at) ??
+    toEpochMs((a as any).vistoUltimaVez) ??
+    toEpochMs((a as any).updatedAt) ??
+    toEpochMs((a as any).UpdatedAt) ??
+    toEpochMs((a as any).custom?.LastSeen) ??
+    toEpochMs((a as any).custom?.lastSeen) ??
+    toEpochMs((a as any).custom?.LastSeenAt) ??
+    toEpochMs((a as any).custom?.lastSeenAt) ??
+    null
+  );
+}
+
+function getCiclosLavado(a: RawAsset): number {
+  return (
+    Number((a as any).ciclosLavado ?? NaN) ||
+    Number((a as any).washCycles ?? NaN) ||
+    Number((a as any).custom?.ciclosLavado ?? NaN) ||
+    Number((a as any).custom?.CiclosLavado ?? NaN) ||
+    Number((a as any).custom?.fields?.ciclosLavado ?? NaN) ||
+    Number((a as any).custom?.fields?.CiclosLavado ?? NaN) ||
+    0
+  );
+}
+
+function diffDaysFromNow(ms: number | null): number {
+  if (!ms) return 0;
+  const now = Date.now();
+  return Math.max(0, Math.floor((now - ms) / 86400000));
 }
 
 function toNumberSafe(v: any, fallback = 0) {
@@ -667,32 +853,35 @@ function estadoLabel(k: EstadoKey) {
 function toDetalleRow(a: RawAsset): DetalleRow {
   const tipo = toTipo(a);
   const estadoKey = resolveEstadoKey(a);
-
-  const ciclosLavado =
-    toNumberSafe((a as any).ciclosLavado, NaN) || toNumberSafe((a as any).washCycles, 0);
-
-  const visto =
-    toDateStr((a as any).vistoUltimaVez) ||
-    toDateStr((a as any).lastSeen) ||
-    toDateStr((a as any).LastSeen);
-
-  const creado =
-    toDateStr((a as any).creado) ||
-    toDateStr((a as any).createdAt) ||
-    toDateStr((a as any).CreatedAt);
-
   const ubic = toUbicacion(a);
+  const status = toStatus(a);
+
+  const createdMs = getCreatedMs(a);
+  const lastSeenMs = getLastSeenMs(a);
+
+  const ciclosLavado = getCiclosLavado(a);
+  const antiguedadDias = diffDaysFromNow(createdMs);
+
+  const statusNorm = norm(status);
+
+const enLavanderia =
+  statusNorm === "out" ||
+  statusNorm === "checked out" ||
+  statusNorm === "check out" ||
+  statusNorm === "salida";
+
+  const diasLavanderia = enLavanderia && lastSeenMs ? diffDaysFromNow(lastSeenMs) : 0;
 
   return {
     tipo,
     _id: toId(a),
     tag: toTag(a) || undefined,
-    estado: estadoKey ? estadoLabel(estadoKey) : undefined,
-    vistoUltimaVez: visto || "",
-    creado: creado || "",
+    estado: estadoDisplay(a),
+    vistoUltimaVez: formatDateMx(lastSeenMs),
+    creado: formatDateMx(createdMs),
     ciclosLavado,
-    antiguedadDias: toNumberSafe((a as any).antiguedadDias, 0),
-    diasLavanderia: toNumberSafe((a as any).diasLavanderia, 0),
+    antiguedadDias,
+    diasLavanderia,
     ubicacion: ubic || undefined,
     empleado: toEmpleado(a),
   };
@@ -722,10 +911,15 @@ export async function fetchResumenEstados(_tenantId: string): Promise<EstadoResu
 /** ---------------------------
  *  ✅ 2) Resumen por tipo dentro de un estado
  *  --------------------------*/
-export async function fetchResumenTipos(_tenantId: string, estado: EstadoKey): Promise<TipoResumen[]> {
-  const raw = await postStats<any>(_tenantId, "/api/idlinens/resumen-tipos", { estado });
+export async function fetchResumenTipos(
+  _tenantId: string,
+  location: string
+): Promise<TipoResumen[]> {
+  const raw = await postStats<any>(_tenantId, "/api/idlinens/resumen-tipos", {
+    location,
+  });
 
-  const items: Array<{ tipo: string; count?: number }> = Array.isArray(raw)
+  const items: Array<{ tipo: string; count?: number; rawTipo?: string }> = Array.isArray(raw)
     ? raw
     : Array.isArray(raw?.items)
       ? raw.items
@@ -734,19 +928,19 @@ export async function fetchResumenTipos(_tenantId: string, estado: EstadoKey): P
   return aggregateTipos(
     items.map((d: any) => ({
       tipo: String(d?.tipo ?? ""),
+      rawTipo: String(d?.rawTipo ?? d?.tipo ?? ""),
       count: Number(d?.count || 0),
     }))
   );
 }
-
 /** ---------------------------
  *  ✅ 3) Detalle tabla por estado + tipo
  *  --------------------------*/
 export async function fetchDetallePage(
   _tenantId: string,
-  estado: EstadoKey,
+  location: string,
   tipo: string,
-  limit = 100,
+  limit = 50,
   skip = 0,
   tiposRef?: TipoResumen[]
 ): Promise<{ rows: DetalleRow[]; total: number; limit: number; skip: number }> {
@@ -754,7 +948,7 @@ export async function fetchDetallePage(
 
   const page = await postDetallePage({
     tenantId: _tenantId,
-    estado,
+    location,
     tipo: tipoQuery,
     limit,
     skip,
@@ -768,27 +962,52 @@ export async function fetchDetallePage(
   };
 }
 
+export async function fetchDetalleTipoGlobalPage(
+  _tenantId: string,
+  tipo: string,
+  limit = 200,
+  skip = 0,
+  tiposRef?: TipoResumen[]
+): Promise<{ rows: DetalleRow[]; total: number; limit: number; skip: number }> {
+  const tipoQuery = resolveTipoForQuery(tipo, tiposRef);
+
+  const page = await postDetallePage({
+  tenantId: _tenantId,
+  tipo: tipoQuery,
+  limit,
+  skip,
+  globalTipo: true,
+});
+  return {
+    rows: page.items.map(toDetalleRow),
+    total: page.total,
+    limit: page.limit,
+    skip: page.skip,
+  };
+}
+
 export async function fetchDetalle(
   _tenantId: string,
-  estado: EstadoKey,
+  location: string,
   tipo: string,
   tiposRef?: TipoResumen[]
 ): Promise<DetalleRow[]> {
   const out: DetalleRow[] = [];
   const SAFE_MAX = 5000;
   let skip = 0;
-  const limit = 300;
+  const limit = 200;
 
   const tipoQuery = resolveTipoForQuery(tipo, tiposRef);
 
   while (out.length < SAFE_MAX) {
     const page = await postDetallePage({
       tenantId: _tenantId,
-      estado,
+      location,
       tipo: tipoQuery,
       limit,
       skip,
     });
+
     if (!page.items.length) break;
 
     out.push(...page.items.map(toDetalleRow));
@@ -799,7 +1018,6 @@ export async function fetchDetalle(
 
   return out;
 }
-
 /** ---------------------------
  *  ✅ Totales por tipo (Nuevos + Circulación)
  *  --------------------------*/
@@ -817,6 +1035,154 @@ export async function fetchTotalesPorTipo(_tenantId: string): Promise<TipoResume
       count: Number(d?.count || 0),
     }))
   );
+}
+
+export type UbicacionResumen = {
+  id: string;
+  nombre: string;
+  count: number; 
+};
+
+export async function fetchDistribucionPorUbicacion(
+  tenantId: string
+): Promise<UbicacionResumen[]> {
+  const sessionToken =
+    typeof window !== "undefined"
+      ? String(localStorage.getItem("cloudSessionToken") || "").trim()
+      : "";
+
+  const idToken =
+    typeof window !== "undefined"
+      ? String(localStorage.getItem("cloudIdToken") || "").trim()
+      : "";
+
+  if (!sessionToken) {
+    throw new Error("Sesión no válida");
+  }
+
+  const resp = await fetch(
+    `/api/cloud/locations?limit=500&tenantId=${encodeURIComponent(tenantId)}`,
+    {
+      method: "GET",
+      headers: {
+        "x-session-token": sessionToken,
+        ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}),
+        "x-tenant-id": tenantId,
+      },
+      cache: "no-store",
+    }
+  );
+
+  const data = await resp.json().catch(() => ({}));
+
+  if (!resp.ok || data?.ok === false) {
+    throw new Error(data?.error || data?.message || "No se pudo cargar ubicaciones");
+  }
+
+  const arr = Array.isArray(data?.locations)
+    ? data.locations
+    : Array.isArray(data?.items)
+      ? data.items
+      : Array.isArray(data)
+        ? data
+        : [];
+
+ const out: UbicacionResumen[] = arr
+  .map((loc: any): UbicacionResumen => {
+    const id = String(
+      loc?.id ?? loc?._id ?? loc?.raw?.id ?? loc?.raw?.locationId ?? ""
+    ).trim();
+
+    const nombre = String(
+      loc?.name ?? loc?.nombre ?? loc?.raw?.name ?? loc?.raw?.LocationName ?? id
+    ).trim();
+
+    const count = Number(loc?.totalAssets ?? loc?.raw?.totalAssets ?? 0);
+
+    return {
+      id,
+      nombre: nombre || id,
+      count,
+    };
+  })
+  .filter((x: UbicacionResumen) => Boolean(x.id));
+
+out.sort((a: UbicacionResumen, b: UbicacionResumen) => b.count - a.count);
+return out;
+}
+
+
+export async function fetchResumenTiposPorLocation(
+  tenantId: string,
+  location: string
+): Promise<TipoResumen[]> {
+  const loc = String(location || "").trim();
+  if (!loc) return [];
+
+  const locNorm = norm(loc);
+  const all = await getAllAssetsCached(tenantId, {});
+
+  const filtered = all.filter((a: RawAsset) => {
+    const ubic = String(
+      a?.Location ?? a?.location ?? a?.locationId ?? a?.ubicacion ?? ""
+    ).trim();
+
+    return norm(ubic) === locNorm;
+  });
+
+  return aggregateTipos(
+    filtered.map((a: RawAsset) => ({
+      tipo: String(
+        a?.AssetType ?? a?.assetType ?? a?.type ?? a?.Type ?? a?.tipo ?? ""
+      ),
+      count: 1,
+    }))
+  );
+}
+
+export async function fetchDetallePagePorLocation(
+  tenantId: string,
+  location: string,
+  tipo: string,
+  limit = 100,
+  skip = 0,
+  tiposRef?: TipoResumen[]
+): Promise<{ rows: DetalleRow[]; total: number; limit: number; skip: number }> {
+  const loc = String(location || "").trim();
+  const tipoQuery = resolveTipoForQuery(tipo, tiposRef);
+
+  if (!loc || !tipoQuery) {
+    return { rows: [], total: 0, limit, skip };
+  }
+
+  const all = await getAllAssetsCached(tenantId, {});
+
+  const filtered = all.filter((a: RawAsset) => {
+    const ubic =
+      String(a?.Location ?? a?.location ?? a?.ubicacion ?? "").trim();
+
+    const assetTipo = String(
+      a?.AssetType ?? a?.type ?? a?.tipo ?? ""
+    ).trim();
+
+    return ubic === loc && canonTipo(assetTipo) === canonTipo(tipoQuery);
+  });
+
+  filtered.sort((a, b) => {
+    const da = toEpochMs(a?.LastSeen ?? a?.lastSeen ?? a?.vistoUltimaVez) ?? 0;
+    const db = toEpochMs(b?.LastSeen ?? b?.lastSeen ?? b?.vistoUltimaVez) ?? 0;
+    return db - da;
+  });
+
+  const total = filtered.length;
+  const pageItems = filtered.slice(skip, skip + limit);
+
+  return {
+    rows: pageItems.map((a) => toDetalleRow(a)),
+    total,
+    limit,
+    skip,
+  };
 }
 
 /** ---------------------------
@@ -959,10 +1325,10 @@ export function buildMovimientoPdfUrl(tenantId: string, movimientoId: string) {
   const qs = new URLSearchParams({ id: movimientoId, tenantId });
   return `${base}?${qs.toString()}`;
 }
-
-/** =========================================================
- *  ✅ INACTIVOS 15+ DÍAS
- *  ========================================================= */
+ 
+ //** =========================================================
+ //*  ✅ INACTIVOS 15+ DÍAS
+ //  ========================================================= 
 
 type Inactivos15ResumenResp = { items?: Array<{ tipo: string; count?: number }> } | any[];
 
@@ -973,16 +1339,60 @@ type Inactivos15DetalleResp = {
   items?: RawAsset[];
 };
 
+// =========================================================
+// LEGACY ACTUAL (lo dejamos para no romper nada todavía)
+// =========================================================
 export async function fetchInactivos15ResumenTipos(
   tenantId: string,
   opts?: { estado?: EstadoKey | "todos" }
 ): Promise<Inactivos15TipoResumen[]> {
   const estado = (opts?.estado ?? "todos") as any;
 
+  const body: any = {};
+  if (estado !== "todos") body.estado = estado;
+
   const raw = await postStats<Inactivos15ResumenResp>(
     tenantId,
     "/api/idlinens/inactivos15/resumen-tipos",
-    { estado }
+    body
+  );
+
+  const items: Array<{ tipo: string; count?: number }> = Array.isArray(raw)
+    ? raw
+    : Array.isArray((raw as any)?.items)
+      ? (raw as any).items
+      : [];
+
+  const tipos = aggregateTipos(
+    items.map((d: any) => ({
+      tipo: String(d?.tipo ?? ""),
+      count: Number(d?.count || 0),
+    }))
+  );
+
+  return tipos.map((t) => ({
+    key: t.key,
+    tipo: t.tipo,
+    count: t.count,
+    rawTipo: t.rawTipo,
+  }));
+}
+
+// =========================================================
+// NUEVO - ÚLTIMA ACTIVIDAD (>15 días)
+// SOLO para la gráfica por ahora
+// =========================================================
+export async function fetchInactivos15UltimaActividadResumenTipos(
+  tenantId: string,
+  days = 15
+): Promise<Inactivos15TipoResumen[]> {
+  const raw = await postStats<Inactivos15ResumenResp>(
+    tenantId,
+    "/api/idlinens/inactivos15/ultima-actividad/resumen-tipos",
+    {
+  days,
+  excludeStatuses: ["created", "CREATED", "nuevo", "nuevoS", "NUEVO", "NUEVOS"],
+}
   );
 
   const items: Array<{ tipo: string; count?: number }> = Array.isArray(raw)
@@ -1013,26 +1423,23 @@ export async function fetchInactivos15DetallePage(
     tipo?: string;
     limit?: number;
     skip?: number;
-    tiposRef?: Inactivos15TipoResumen[];
   }
 ): Promise<{ rows: Inactivos15DetalleRow[]; total: number; limit: number; skip: number }> {
   const estado = (params.estado ?? "todos") as any;
-  const limit = params.limit ?? 25;
+  const limit = params.limit ?? 10000;
   const skip = params.skip ?? 0;
+  const tipoQuery = params.tipo ? String(params.tipo).trim() : "";
 
-  const tiposAsTipoResumen: TipoResumen[] = (params.tiposRef || []).map((t) => ({
-    key: t.key,
-    tipo: t.tipo,
-    count: t.count,
-    rawTipo: t.rawTipo,
-  }));
+  const body: any = { tipo: tipoQuery, limit, skip };
 
-  const tipoQuery = params.tipo ? resolveTipoForQuery(params.tipo, tiposAsTipoResumen) : "";
+  if (estado !== "todos") {
+    body.estado = estado;
+  }
 
   const raw = await postStats<Inactivos15DetalleResp>(
     tenantId,
     "/api/idlinens/inactivos15/detalle-page",
-    { estado, tipo: tipoQuery, limit, skip }
+    body
   );
 
   const items = Array.isArray((raw as any)?.items) ? ((raw as any).items as RawAsset[]) : [];
@@ -1077,7 +1484,11 @@ async function getJson<T>(tenantId: string, path: string): Promise<T> {
 
   const txt = await resp.text().catch(() => "");
   let data: any = null;
-  try { data = txt ? JSON.parse(txt) : null; } catch { data = { raw: txt }; }
+  try {
+    data = txt ? JSON.parse(txt) : null;
+  } catch {
+    data = { raw: txt };
+  }
 
   if (!resp.ok) throw new Error(`Reports proxy error (${resp.status}): ${txt || "sin detalle"}`);
   return unwrapOk<T>(data);
@@ -1087,12 +1498,18 @@ export async function fetchReportDays(tenantId: string, limit = 30): Promise<Rep
   const data: any = await getJson<any>(tenantId, `/api/idlinens/reports/days?limit=${limit}`);
   const items = Array.isArray(data?.items) ? data.items : [];
   return items
-    .map((x: any) => ({ dateStr: String(x?.dateStr || "").trim(), count: typeof x?.count === "number" ? x.count : undefined }))
+    .map((x: any) => ({
+      dateStr: String(x?.dateStr || "").trim(),
+      count: typeof x?.count === "number" ? x.count : undefined,
+    }))
     .filter((x: ReportDay) => !!x.dateStr);
 }
 
 export async function fetchReportsByDate(tenantId: string, dateStr: string, limit = 50): Promise<ReportItem[]> {
-  const data: any = await getJson<any>(tenantId, `/api/idlinens/reports?date=${encodeURIComponent(dateStr)}&limit=${limit}`);
+  const data: any = await getJson<any>(
+    tenantId,
+    `/api/idlinens/reports?date=${encodeURIComponent(dateStr)}&limit=${limit}`
+  );
   const items = Array.isArray(data?.items) ? data.items : [];
   return items
     .map((x: any) => ({
@@ -1112,6 +1529,159 @@ export async function fetchReportsByDate(tenantId: string, dateStr: string, limi
 export function getReportDownloadUrl(reportId: string) {
   return `/api/idlinens/reports/download?id=${encodeURIComponent(reportId)}`;
 }
+export async function fetchInactivos15UltimaActividadDetallePage(
+  tenantId: string,
+  params: {
+    tipo?: string;
+    limit?: number;
+    skip?: number;
+    days?: number;
+  }
+): Promise<{ rows: Inactivos15DetalleRow[]; total: number; limit: number; skip: number }> {
+  const limit = params.limit ?? 10000;
+  const skip = params.skip ?? 0;
+  const tipoQuery = params.tipo ? String(params.tipo).trim() : "";
+  const days = params.days ?? 15;
+
+  const raw = await postStats<Inactivos15DetalleResp>(
+    tenantId,
+    "/api/idlinens/inactivos15/ultima-actividad/detalle-page",
+    {
+  tipo: tipoQuery,
+  limit,
+  skip,
+  days,
+  excludeStatuses: ["created", "CREATED", "nuevo", "NUEVO", "nuevos", "NUEVOS"],
+}
+  );
+
+  const items = Array.isArray((raw as any)?.items) ? ((raw as any).items as RawAsset[]) : [];
+  const total = typeof (raw as any)?.total === "number" ? (raw as any).total : items.length;
+
+  const baseRows = items.map(toDetalleRow);
+
+  const rows: Inactivos15DetalleRow[] = baseRows.map((r, i) => {
+    const a = items[i] as any;
+    return {
+      ...r,
+      daysInactive: typeof a?.daysInactive === "number" ? a.daysInactive : undefined,
+      lastMovementAt: a?.lastMovementAt ? String(a.lastMovementAt) : undefined,
+    };
+  });
+
+  return { rows, total, limit, skip };
+}
+
+export async function fetchInactivos15NuevosCreatedDetallePage(
+  tenantId: string,
+  params: {
+    tipo?: string;
+    limit?: number;
+    skip?: number;
+    days?: number;
+  }
+): Promise<{ rows: Inactivos15DetalleRow[]; total: number; limit: number; skip: number }> {
+  const limit = params.limit ?? 10000;
+  const skip = params.skip ?? 0;
+  const tipoQuery = params.tipo ? String(params.tipo).trim() : "";
+  const days = params.days ?? 15;
+
+  const raw = await postStats<Inactivos15DetalleResp>(
+    tenantId,
+    "/api/idlinens/inactivos-nuevos-created/detalle-page",
+    {
+      tipo: tipoQuery,
+      limit,
+      skip,
+      days,
+    }
+  );
+
+  const items = Array.isArray((raw as any)?.items) ? ((raw as any).items as RawAsset[]) : [];
+  const total = typeof (raw as any)?.total === "number" ? (raw as any).total : items.length;
+
+ const baseRows = items.map(toDetalleRow);
+
+const rows: Inactivos15DetalleRow[] = baseRows.map((r, i) => {
+  const a = items[i] as any;
+  const rr = r as any;
+
+  return {
+    ...r,
+
+    _id: a?._id ?? a?.id ?? rr?._id,
+    id: a?.id ?? a?._id ?? rr?._id,
+
+    tag: a?.tag ?? a?.AssetTag ?? rr?.tag,
+    AssetTag: a?.AssetTag ?? a?.tag ?? rr?.tag,
+
+    tipo: a?.tipo ?? a?.AssetType ?? a?.assetType ?? rr?.tipo,
+    AssetType: a?.AssetType ?? a?.assetType ?? a?.tipo ?? rr?.tipo,
+
+    ubicacion: a?.ubicacion ?? a?.Location ?? a?.location ?? a?.locationId ?? rr?.ubicacion,
+    location: a?.location ?? a?.Location ?? a?.ubicacion ?? a?.locationId ?? rr?.location,
+    Location: a?.Location ?? a?.ubicacion ?? a?.location ?? a?.locationId ?? rr?.Location,
+
+    estado: a?.estado ?? a?.status ?? a?.Status ?? rr?.estado,
+    status: a?.status ?? a?.Status ?? a?.estado ?? rr?.status,
+    Status: a?.Status ?? a?.status ?? a?.estado ?? rr?.Status,
+
+    Created: a?.Created ?? a?.createdAt ?? a?.CreatedAt ?? rr?.Created,
+    createdAt: a?.createdAt ?? a?.Created ?? a?.CreatedAt ?? rr?.createdAt,
+    CreatedAt: a?.CreatedAt ?? a?.Created ?? a?.createdAt ?? rr?.CreatedAt,
+
+    LastSeen: a?.LastSeen ?? a?.lastSeen ?? rr?.LastSeen,
+    lastSeen: a?.lastSeen ?? a?.LastSeen ?? rr?.lastSeen,
+
+    employee:
+      a?.employee ??
+      a?.Employee ??
+      a?.empleado ??
+      a?.Empleado ??
+      a?.PersonnelName ??
+      a?.personnelName ??
+      a?.x_employee ??
+      a?.assignedTo ??
+      a?.AssignedTo ??
+      rr?.employee,
+
+    Empleado:
+      a?.Empleado ??
+      a?.empleado ??
+      a?.PersonnelName ??
+      a?.personnelName ??
+      a?.x_employee ??
+      rr?.Empleado,
+
+    PersonnelName:
+      a?.PersonnelName ??
+      a?.personnelName ??
+      a?.Empleado ??
+      a?.empleado ??
+      a?.x_employee ??
+      rr?.PersonnelName,
+
+    antiguedadDias: a?.antiguedadDias ?? rr?.antiguedadDias,
+    diasLavanderia: a?.diasLavanderia ?? rr?.diasLavanderia,
+    diasEnLavanderia:
+      a?.diasEnLavanderia ??
+      a?.diasLavanderia ??
+      rr?.diasEnLavanderia,
+
+    daysInactive:
+      typeof a?.daysInactive === "number"
+        ? a.daysInactive
+        : rr?.daysInactive,
+
+    lastMovementAt: a?.lastMovementAt
+      ? String(a.lastMovementAt)
+      : rr?.lastMovementAt,
+  } as Inactivos15DetalleRow;
+});
+
+  return { rows, total, limit, skip };
+}
+
 /** ---------------------------
  *  Export util
  *  --------------------------*/

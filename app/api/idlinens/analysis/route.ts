@@ -275,9 +275,6 @@ export async function POST(req: NextRequest) {
       for (const raw of itemsRaw) {
         const mapped = toAnalysisAsset(raw);
 
-        // ✅ filtra retirados aquí para que TODO el resumen sea correcto
-        if (cleanStr(mapped.location) === RETIRED_LOCATION_ID) continue;
-
         assets.push(mapped);
         if (assets.length >= maxScan) break;
       }
@@ -327,16 +324,33 @@ export async function POST(req: NextRequest) {
 function buildSummaryFromAssets(assets: AnalysisAsset[]) {
   const nowMs = Date.now();
 
-  // cyclesByType (SUMA) — si quieres “promedio”, se cambia a AVG
-  const cyclesMap = new Map<string, number>();
+    // cyclesByType (PROMEDIO) — excluye location Nuevos
+  const cyclesMap = new Map<string, { total: number; count: number }>();
+
   for (const a of assets) {
     const tipo = cleanStr(a.tipo);
     if (!tipo) continue;
-    cyclesMap.set(tipo, (cyclesMap.get(tipo) || 0) + (Number(a.ciclosLavado) || 0));
+
+    const loc = normalizeKey(cleanStr(a.location));
+
+    // ❌ quitar location Nuevos
+    if (loc === "nuevos" || loc === "nuevo") continue;
+
+    const ciclos = Number(a.ciclosLavado) || 0;
+
+    const current = cyclesMap.get(tipo) || { total: 0, count: 0 };
+    current.total += ciclos;
+    current.count += 1;
+
+    cyclesMap.set(tipo, current);
   }
 
   const cyclesByType = [...cyclesMap.entries()]
-    .map(([tipo, totalCycles]) => ({ tipo, totalCycles }))
+    .map(([tipo, d]) => ({
+      tipo,
+      // se deja el nombre totalCycles para NO romper el frontend actual
+      totalCycles: d.count > 0 ? Number((d.total / d.count).toFixed(2)) : 0,
+    }))
     .sort((a, b) => b.totalCycles - a.totalCycles);
 
   // ✅ inactiveByType (COUNT) => TODOS los "nuevos": created/creado/nuevo/nuevos

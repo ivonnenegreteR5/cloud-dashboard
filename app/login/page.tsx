@@ -62,8 +62,8 @@ function normalizeApps(raw: any): string[] {
 export default function LoginPage() {
   const router = useRouter();
 
-  const [email, setEmail] = useState("ivonne.negrete@comnet.mx");
-  const [password, setPassword] = useState("contraAPI");
+  const [email, setEmail] = useState("");
+const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -215,14 +215,34 @@ export default function LoginPage() {
 
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-neutral-50">
-      <Card className="w-full max-w-md shadow-md">
+  <div
+    className="min-h-screen bg-cover bg-center bg-no-repeat flex flex-col items-center justify-center relative"
+    style={{ backgroundImage: "url('/logo.png')" }}
+  >
+    {/* 🔥 Capa oscura */}
+    <div className="absolute inset-0 bg-black/50" />
+
+    {/* 🔥 Contenido */}
+    <div className="relative z-10 w-full flex flex-col items-center px-4">
+
+      {/* 🔥 TÍTULO */}
+     <img
+  src="/logo sin fondo.png"
+  alt="IDAPP"
+ className="mb-8 w-[650px] h-auto object-contain"
+/>
+
+      {/* 🔥 LOGIN */}
+      <Card className="w-full max-w-md shadow-2xl bg-white/90 backdrop-blur-md">
         <CardHeader>
-          <CardTitle className="text-center text-xl">Iniciar sesión</CardTitle>
+          <CardTitle className="text-center text-xl font-semibold">
+            Iniciar sesión
+          </CardTitle>
         </CardHeader>
 
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-4">
+            
             {/* Correo */}
             <div className="flex flex-col space-y-1">
               <span className="text-sm font-medium text-neutral-700">
@@ -259,9 +279,6 @@ export default function LoginPage() {
                   type="button"
                   onClick={() => setShowPassword((v) => !v)}
                   className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md p-1 text-neutral-600 hover:bg-neutral-100"
-                  aria-label={
-                    showPassword ? "Ocultar contraseña" : "Mostrar contraseña"
-                  }
                 >
                   {showPassword ? (
                     <EyeOff className="h-4 w-4" />
@@ -274,15 +291,19 @@ export default function LoginPage() {
 
             {/* Error */}
             {error && (
-              <p className="text-sm text-red-500 whitespace-pre-wrap">{error}</p>
+              <p className="text-sm text-red-500 whitespace-pre-wrap">
+                {error}
+              </p>
             )}
 
             <Button type="submit" className="w-full" disabled={loading}>
               {loading ? "Entrando..." : "Entrar"}
             </Button>
+
           </form>
         </CardContent>
       </Card>
     </div>
-  );
+  </div>
+);
 }

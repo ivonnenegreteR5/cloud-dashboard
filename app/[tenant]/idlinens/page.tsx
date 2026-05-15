@@ -9,9 +9,9 @@ import { StatusPie } from "@/components/idlinens/StatusPie";
 import { TipoBar } from "@/components/idlinens/TipoBar";
 
 import {
-  fetchResumenEstados,
+  fetchDistribucionPorUbicacion,
   fetchTotalesPorTipo,
-  EstadoResumen,
+  UbicacionResumen,
   TipoResumen,
 } from "@/components/idlinens/api";
 
@@ -19,21 +19,39 @@ export default function IdLinensPage() {
   const tenantId = useTenant();
   const siteTitle = "ID Linens - HA Chihuahua";
 
-  const [estados, setEstados] = useState<EstadoResumen[] | null>(null);
+  const [estados, setEstados] = useState<UbicacionResumen[] | null>(null);
   const [tipos, setTipos] = useState<TipoResumen[] | null>(null);
-  const [err, setErr] = useState<string | null>(null);
+
+  const [errPie, setErrPie] = useState<string | null>(null);
+  const [errBar, setErrBar] = useState<string | null>(null);
 
   useEffect(() => {
     let alive = true;
 
-    setErr(null);
-    Promise.all([fetchResumenEstados(tenantId), fetchTotalesPorTipo(tenantId)])
-      .then(([e, t]) => {
+    setErrPie(null);
+    setErrBar(null);
+    setEstados(null);
+    setTipos(null);
+
+    fetchDistribucionPorUbicacion(tenantId)
+      .then((e) => {
         if (!alive) return;
         setEstados(e);
+      })
+      .catch((e: unknown) => {
+        if (!alive) return;
+        setErrPie(e instanceof Error ? e.message : String(e));
+      });
+
+    fetchTotalesPorTipo(tenantId)
+      .then((t) => {
+        if (!alive) return;
         setTipos(t);
       })
-      .catch((e) => alive && setErr(String(e?.message || e)));
+      .catch((e: unknown) => {
+        if (!alive) return;
+        setErrBar(e instanceof Error ? e.message : String(e));
+      });
 
     return () => {
       alive = false;
@@ -42,13 +60,21 @@ export default function IdLinensPage() {
 
   return (
     <IdLinensShell tenantId={tenantId} title={siteTitle}>
-      {err && (
-        <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
-          Error: {err}
+      {(errPie || errBar) && (
+        <div className="mb-4 space-y-2">
+          {errPie && (
+            <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+              Error gráfica de localidades: {errPie}
+            </div>
+          )}
+          {errBar && (
+            <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+              Error gráfica por tipo: {errBar}
+            </div>
+          )}
         </div>
       )}
 
-      {/* ✅ Layout: Pie más chico y Barras más largo (ocupa lo que sobra) */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
         <div className="lg:col-span-4">
           {!estados ? (

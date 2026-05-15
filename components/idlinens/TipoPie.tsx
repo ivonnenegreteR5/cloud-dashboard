@@ -1,62 +1,61 @@
-
 // components/idlinens/TipoPie.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from "recharts";
-import type { EstadoKey, TipoResumen } from "@/components/idlinens/api";
+import type { TipoResumen } from "@/components/idlinens/api";
 
 function hashColor(str: string) {
   let h = 0;
-  for (let i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) >>> 0;
+  for (let i = 0; i < str.length; i++) {
+    h = (h * 31 + str.charCodeAt(i)) >>> 0;
+  }
   const hue = h % 360;
   return `hsl(${hue} 70% 45%)`;
 }
 
 export function TipoPie({
   tenantId,
-  estado,
+  location,
   data,
 }: {
   tenantId: string;
-  estado: EstadoKey;
+  location: string;
   data: TipoResumen[];
 }) {
   const router = useRouter();
   const [hidden, setHidden] = useState<Record<string, boolean>>({});
 
-  // ✅ orden consistente (mayor a menor)
   const sorted = useMemo(() => {
     return [...(data || [])].sort((a, b) => (b.count || 0) - (a.count || 0));
   }, [data]);
 
-  // ✅ cuando cambia estado o cambia la data, resetea ocultos
   useEffect(() => {
     setHidden({});
-  }, [estado, sorted.length]);
+  }, [location, sorted.length]);
 
   const visibleData = useMemo(() => {
     return sorted
       .filter((d) => !hidden[d.tipo])
-      .map((d) => ({ ...d, name: d.tipo }));
+      .map((d) => ({
+        ...d,
+        name: d.tipo,
+      }));
   }, [sorted, hidden]);
 
   const onToggle = (tipo: string) => {
-    setHidden((p) => ({ ...p, [tipo]: !p[tipo] }));
+    setHidden((prev) => ({ ...prev, [tipo]: !prev[tipo] }));
   };
 
-  /**
-   * ✅ Navegación correcta:
-   * - usamos rawTipo (tipo REAL en BD) si viene
-   * - fallback a tipo canonizado si no hay rawTipo
-   */
   const goToTipo = (row?: TipoResumen) => {
     const raw = row?.rawTipo ?? row?.tipo;
-    if (!raw) return;
+    if (!raw || !location) return;
 
     router.push(
-      `/${tenantId}/idlinens/estado/${estado}/tipo/${encodeURIComponent(raw)}`
+      `/${tenantId}/idlinens/estado/${encodeURIComponent(
+        location
+      )}/tipo/${encodeURIComponent(raw)}`
     );
   };
 
@@ -66,11 +65,11 @@ export function TipoPie({
         Distribución por Tipo de blancos
       </div>
 
-      {/* Leyenda clickeable */}
       <div className="mb-3 flex flex-wrap gap-2 text-xs">
         {sorted.map((d) => {
           const off = !!hidden[d.tipo];
-          const c = hashColor(d.tipo);
+          const color = hashColor(d.tipo);
+
           return (
             <button
               key={d.tipo}
@@ -84,7 +83,7 @@ export function TipoPie({
             >
               <span
                 className="inline-block h-3 w-5 rounded"
-                style={{ background: c }}
+                style={{ background: color }}
               />
               <span className="text-neutral-800">{d.tipo}</span>
               <span className="text-neutral-500">· {d.count}</span>
@@ -97,17 +96,20 @@ export function TipoPie({
         <ResponsiveContainer width="100%" height="100%">
           <PieChart>
             <Tooltip
-              formatter={(value: any, _name: any, props: any) => {
+              formatter={(value, _name, props) => {
                 const tipo = props?.payload?.tipo ?? "";
-                return [`${value}`, tipo];
+                return [String(value ?? 0), tipo];
               }}
             />
+
             <Pie
               data={visibleData}
               dataKey="count"
               nameKey="name"
               outerRadius={220}
-              // ✅ Recharts pasa el payload del slice en entry.payload (a veces) o directo
+              minAngle={2}
+              stroke="#ffffff"
+              strokeWidth={2}
               onClick={(entry: any) => {
                 const row: TipoResumen | undefined =
                   entry?.payload ?? entry ?? undefined;
