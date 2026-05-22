@@ -14,19 +14,56 @@ function clearClientSession() {
     localStorage.removeItem("cloudTenantName");
     localStorage.removeItem("cloudTenantLogoUrl");
     localStorage.removeItem("cloudTenantTheme");
-    localStorage.removeItem("cloudLastTenant");
     localStorage.removeItem("cloudSelectedTenantId");
 
     sessionStorage.clear();
 
-    // limpiar cookies que usa tu app
-    document.cookie =
-      "cloudSelectedTenantId=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
-    document.cookie =
-      "cloudApps=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+    document.cookie = "cloudSelectedTenantId=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+    document.cookie = "cloudApps=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+  } catch {}
+}
+
+function redirectToLogin() {
+  if (typeof window === "undefined") return;
+  if (window.location.pathname === "/login") return;
+
+  clearClientSession();
+  window.location.replace("/login");
+}
+
+function isJwtExpired(token: string) {
+  try {
+    const payload = JSON.parse(atob(token.split(".")[1] || ""));
+    const exp = Number(payload?.exp || 0);
+
+    if (!exp) return false;
+
+    const now = Math.floor(Date.now() / 1000);
+
+    // margen de 30 segundos para evitar que falle justo en la llamada
+    return exp <= now + 30;
   } catch {
-    // ignore
+    return false;
   }
+}
+
+function textHasExpiredTokenError(value: any) {
+  const raw = JSON.stringify(value || {}).toLowerCase();
+
+  return (
+    raw.includes("token expired") ||
+    raw.includes("jwt expired") ||
+    raw.includes("session expired") ||
+    raw.includes("unauthorized") ||
+    raw.includes("unauthenticated") ||
+    raw.includes("invalid token") ||
+    raw.includes("expired") ||
+    raw.includes("token inválido") ||
+    raw.includes("token invalido") ||
+    raw.includes("token expirado") ||
+    raw.includes("sesión expirada") ||
+    raw.includes("sesion expirada")
+  );
 }
 
 async function shouldLogoutFromResponse(resp: Response) {
@@ -37,22 +74,7 @@ async function shouldLogoutFromResponse(resp: Response) {
     if (!contentType.includes("application/json")) return false;
 
     const data = await resp.clone().json().catch(() => null);
-    const rawMessage = String(
-      data?.error || data?.message || data?.raw || ""
-    ).toLowerCase();
-
-    return (
-      rawMessage.includes("token expired") ||
-      rawMessage.includes("jwt expired") ||
-      rawMessage.includes("session expired") ||
-      rawMessage.includes("unauthorized") ||
-      rawMessage.includes("unauthenticated") ||
-      rawMessage.includes("invalid token") ||
-      rawMessage.includes("token inválido") ||
-      rawMessage.includes("token expirado") ||
-      rawMessage.includes("sesión expirada") ||
-      rawMessage.includes("sesion expirada")
-    );
+    return textHasExpiredTokenError(data);
   } catch {
     return false;
   }
@@ -62,18 +84,46 @@ export default function SessionExpiredGuard() {
   useEffect(() => {
     if (typeof window === "undefined") return;
 
-    const originalFetch = window.fetch.bind(window);
     let redirecting = false;
+
+    const safeRedirect = () => {
+      if (redirecting) return;
+      redirecting = true;
+      redirectToLogin();
+    };
+
+    const checkStoredToken = () => {
+      if (window.location.pathname === "/login") return;
+
+      const idToken = String(localStorage.getItem("cloudIdToken") || "").trim();
+      const sessionToken = String(localStorage.getItem("cloudSessionToken") || "").trim();
+
+      // Si estás dentro del dashboard y ya no hay tokens, saca al login
+      if (!idToken || !sessionToken) {
+        safeRedirect();
+        return;
+      }
+
+      // Si el JWT Firebase ya caducó, saca al login aunque estés en IdLinens o Inventory
+      if (isJwtExpired(idToken)) {
+        safeRedirect();
+      }
+    };
+
+    checkStoredToken();
+
+    const interval = window.setInterval(checkStoredToken, 30000);
+
+    window.addEventListener("focus", checkStoredToken);
+    document.addEventListener("visibilitychange", checkStoredToken);
+
+    const originalFetch = window.fetch.bind(window);
 
     window.fetch = async (...args) => {
       const resp = await originalFetch(...args);
 
-      const pathname = window.location.pathname;
+      if (window.location.pathname === "/login") return resp;
 
-      // evitar bucles cuando ya estás en login
-      if (pathname === "/login") return resp;
-
-      // evitar reaccionar al propio login
       const requestUrl =
         typeof args[0] === "string"
           ? args[0]
@@ -81,15 +131,12 @@ export default function SessionExpiredGuard() {
           ? args[0].url
           : "";
 
-      const isLoginRequest = requestUrl.includes("/api/auth/session");
-      if (isLoginRequest) return resp;
+      if (requestUrl.includes("/api/auth/session")) return resp;
 
       const mustLogout = await shouldLogoutFromResponse(resp);
 
-      if (mustLogout && !redirecting) {
-        redirecting = true;
-        clearClientSession();
-        window.location.replace("/login");
+      if (mustLogout) {
+        safeRedirect();
       }
 
       return resp;
@@ -97,6 +144,9 @@ export default function SessionExpiredGuard() {
 
     return () => {
       window.fetch = originalFetch;
+      window.clearInterval(interval);
+      window.removeEventListener("focus", checkStoredToken);
+      document.removeEventListener("visibilitychange", checkStoredToken);
     };
   }, []);
 

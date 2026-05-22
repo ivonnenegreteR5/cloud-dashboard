@@ -109,9 +109,7 @@ export default function InventariosAbiertosPage() {
                           {item.name}
                         </div>
 
-                        <div className="mt-1 text-xs text-neutral-500">
-                          ID: {item.id}
-                        </div>
+                        
                       </td>
 
                       <td className="py-4">
