@@ -142,7 +142,7 @@ const [password, setPassword] = useState("");
     // Guardar en localStorage (mantiene lo ya funcional)
     if (apiIdToken) localStorage.setItem("cloudIdToken", apiIdToken);
     localStorage.setItem("cloudSessionToken", sessionToken);
-   localStorage.removeItem("cloudUserEmail");
+    localStorage.setItem("cloudUserEmail", email);
     localStorage.setItem("cloudTenantId", tenantId);
     localStorage.setItem("cloudUserRole", role);
     localStorage.setItem("cloudIsSuperAdmin", isSuperAdmin ? "true" : "false");
