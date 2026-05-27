@@ -67,7 +67,7 @@ function formatUnix(tsSecAny: any): string {
 // ✅ NUEVO: resolver ubicación visual para que coincida con tus gráficas
 function resolveEstadoFromAsset(
   a: any
-): "nuevos" | "lavanderia" | "circulacion" | null {
+): "nuevos" | "almacen" | "lavanderia" |  "circulacion" | null {
   const loc = String(
     a?.Location ?? a?.locationId ?? a?.raw?.Location ?? a?.raw?.locationId ?? ""
   )
@@ -81,8 +81,11 @@ function resolveEstadoFromAsset(
     .toLowerCase();
 
   if (loc === "nuevos" && st === "created") return "nuevos";
-  if (loc === "almacen" && st === "out") return "lavanderia";
-  if (loc === "almacen" && st === "in") return "circulacion";
+  if (loc === "circulacion" && st === "in")
+  return "circulacion";
+
+if (loc === "almacen" && st === "in")
+  return "almacen";
 
   return null;
 }

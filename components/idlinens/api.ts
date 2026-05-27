@@ -1,5 +1,5 @@
 // components/idlinens/api.ts
-export type EstadoKey = "circulacion" | "lavanderia" | "nuevos";
+export type EstadoKey = "circulacion" | "almacen" |"lavanderia" | "nuevos";
 
 export type EstadoResumen = {
   estado: EstadoKey;
@@ -227,8 +227,11 @@ async function getAllAssetsCached(tenantId: string, filter: Record<string, any> 
 
 function filterForEstado(estado?: EstadoKey): Record<string, any> {
   if (estado === "nuevos") return { Status: "created" };
-  if (estado === "lavanderia") return { Location: "Almacen", Status: "out" };
-  if (estado === "circulacion") return { Location: "Almacen", Status: "in" };
+  if (estado === "lavanderia")
+  return { Location: "Lavanderia", Status: "out" };
+
+if (estado === "circulacion")
+  return { Location: "Circulacion", Status: "in" };
   return {};
 }
 
@@ -841,8 +844,12 @@ function resolveEstadoKey(a: RawAsset): EstadoKey | null {
   const st = norm(toStatus(a));
 
   if (st === "created") return "nuevos";
-  if (ubic === "almacen" && st === "out") return "lavanderia";
-  if (ubic === "almacen" && st === "in") return "circulacion";
+  if (ubic === "circulacion" && st === "in")
+  return "circulacion";
+
+if (ubic === "almacen" && st === "in")
+  return "almacen";
+
   return null;
 }
 
