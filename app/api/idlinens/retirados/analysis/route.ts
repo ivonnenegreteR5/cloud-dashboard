@@ -17,7 +17,7 @@ type RetAsset = {
 };
 
 type CacheEntry = {
-  ts: number; // ms
+  ts: number;
   assets: RetAsset[];
 };
 
@@ -33,13 +33,17 @@ export function __setRetiradosCache(tenantId: string, entry: CacheEntry) {
   _retiradosCache.set(key, entry);
 }
 
-// ---------------------
-// Utils
-// ---------------------
 function cleanStr(v: unknown) {
   const s = String(v ?? "").trim();
   if (!s || s === "undefined" || s === "null") return "";
   return s;
+}
+
+function norm(v: unknown) {
+  return cleanStr(v)
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
 }
 
 function cleanNum(v: unknown, fallback: number) {
@@ -91,21 +95,17 @@ function getTokensFromReq(req: NextRequest, body: any) {
   return { sessionToken, authHeader, tenantHint };
 }
 
-// ---------------------
-// Mapper (igual estilo que analysis)
-// ---------------------
 function toRetAsset(a: any): RetAsset {
   const tag = pickStr(
     a?.AssetTag,
     a?.tag,
     a?.custom?.AssetTag,
     a?.custom?.tag,
-    a?.custom?.fields?.AssetTag,
-    a?.custom?.fields?.tag,
     a?._id,
     a?.id,
     ""
   );
+
   const _id = pickStr(a?._id, a?.id, tag);
 
   const tipo = pickStr(
@@ -117,10 +117,6 @@ function toRetAsset(a: any): RetAsset {
     a?.custom?.type,
     a?.custom?.tipo,
     a?.custom?.Description,
-    a?.custom?.fields?.AssetType,
-    a?.custom?.fields?.type,
-    a?.custom?.fields?.tipo,
-    a?.custom?.fields?.Description,
     "—"
   );
 
@@ -129,8 +125,6 @@ function toRetAsset(a: any): RetAsset {
     a?.status,
     a?.custom?.Status,
     a?.custom?.status,
-    a?.custom?.fields?.Status,
-    a?.custom?.fields?.status,
     "in"
   );
 
@@ -143,10 +137,6 @@ function toRetAsset(a: any): RetAsset {
     a?.custom?.location,
     a?.custom?.ubicacion,
     a?.custom?.locationId,
-    a?.custom?.fields?.Location,
-    a?.custom?.fields?.location,
-    a?.custom?.fields?.ubicacion,
-    a?.custom?.fields?.locationId,
     "—"
   );
 
@@ -156,53 +146,31 @@ function toRetAsset(a: any): RetAsset {
         a?.washCycles ??
         a?.custom?.ciclosLavado ??
         a?.custom?.CiclosLavado ??
-        a?.custom?.fields?.ciclosLavado ??
-        a?.custom?.fields?.CiclosLavado ??
         0
     ) || 0;
 
-  // ✅ soporte para tenant HACH: Created / LastSeen epoch seconds
   const createdAtMs =
     parseDateToMs(a?.Created) ??
     parseDateToMs(a?.CreatedAt) ??
     parseDateToMs(a?.createdAt) ??
     parseDateToMs(a?.created) ??
-    parseDateToMs(a?.creado) ??
     parseDateToMs(a?.custom?.Created) ??
     parseDateToMs(a?.custom?.CreatedAt) ??
     parseDateToMs(a?.custom?.createdAt) ??
     parseDateToMs(a?.custom?.created) ??
-    parseDateToMs(a?.custom?.creado) ??
-    parseDateToMs(a?.custom?.fields?.Created) ??
-    parseDateToMs(a?.custom?.fields?.CreatedAt) ??
-    parseDateToMs(a?.custom?.fields?.createdAt) ??
-    parseDateToMs(a?.custom?.fields?.created) ??
-    parseDateToMs(a?.custom?.fields?.creado) ??
-    // fallback
     parseDateToMs(a?.LastSeen) ??
     parseDateToMs(a?.lastSeen) ??
-    parseDateToMs(a?.vistoUltimaVez) ??
     null;
 
   return { _id, tag, tipo, status, location, ciclosLavado, createdAtMs };
 }
 
-// ---------------------
-// Summary builder (3 gráficas)
-// ---------------------
 function buildRetiradosSummary(assets: RetAsset[]) {
   const nowMs = Date.now();
 
-  // 1) Totales por tipo (count)
   const countByType = new Map<string, number>();
-
-  // 2) Promedio antigüedad por tipo (en semanas)
   const ageAggByType = new Map<string, { sumWeeks: number; n: number }>();
-
-  // 3) Promedio ciclos por tipo
   const cycAggByType = new Map<string, { sum: number; n: number }>();
-
-  // Distribución por semana (count) -> para drilldown week
   const countByWeek = new Map<number, number>();
 
   let missingCreatedAt = 0;
@@ -213,18 +181,16 @@ function buildRetiradosSummary(assets: RetAsset[]) {
 
     countByType.set(tipo, (countByType.get(tipo) || 0) + 1);
 
-    // ciclos
-    const cyc = Number(a.ciclosLavado) || 0;
     const cycAgg = cycAggByType.get(tipo) || { sum: 0, n: 0 };
-    cycAgg.sum += cyc;
+    cycAgg.sum += Number(a.ciclosLavado) || 0;
     cycAgg.n += 1;
     cycAggByType.set(tipo, cycAgg);
 
-    // antigüedad
     if (!a.createdAtMs) {
       missingCreatedAt++;
       continue;
     }
+
     const ageDays = Math.max(0, Math.floor((nowMs - a.createdAtMs) / 86_400_000));
     const week = weekFromAgeDays(ageDays);
 
@@ -236,42 +202,35 @@ function buildRetiradosSummary(assets: RetAsset[]) {
     ageAggByType.set(tipo, ageAgg);
   }
 
-  const totalesByType = [...countByType.entries()]
-    .map(([tipo, count]) => ({ tipo, count }))
-    .sort((a, b) => b.count - a.count);
-
-  const avgAgeWeeksByType = [...ageAggByType.entries()]
-    .map(([tipo, v]) => ({
-      tipo,
-      avgWeeks: v.n ? Number((v.sumWeeks / v.n).toFixed(2)) : 0,
-      count: v.n,
-    }))
-    .sort((a, b) => b.avgWeeks - a.avgWeeks);
-
-  const avgCyclesByType = [...cycAggByType.entries()]
-    .map(([tipo, v]) => ({
-      tipo,
-      avgCycles: v.n ? Number((v.sum / v.n).toFixed(2)) : 0,
-      count: v.n,
-    }))
-    .sort((a, b) => b.avgCycles - a.avgCycles);
-
-  const ageByWeek = [...countByWeek.entries()]
-    .map(([week, count]) => ({ week, count }))
-    .sort((a, b) => a.week - b.week);
-
   return {
-    totalesByType,
-    avgAgeWeeksByType,
-    avgCyclesByType,
-    ageByWeek,
+    totalesByType: [...countByType.entries()]
+      .map(([tipo, count]) => ({ tipo, count }))
+      .sort((a, b) => b.count - a.count),
+
+    avgAgeWeeksByType: [...ageAggByType.entries()]
+      .map(([tipo, v]) => ({
+        tipo,
+        avgWeeks: v.n ? Number((v.sumWeeks / v.n).toFixed(2)) : 0,
+        count: v.n,
+      }))
+      .sort((a, b) => b.avgWeeks - a.avgWeeks),
+
+    avgCyclesByType: [...cycAggByType.entries()]
+      .map(([tipo, v]) => ({
+        tipo,
+        avgCycles: v.n ? Number((v.sum / v.n).toFixed(2)) : 0,
+        count: v.n,
+      }))
+      .sort((a, b) => b.avgCycles - a.avgCycles),
+
+    ageByWeek: [...countByWeek.entries()]
+      .map(([week, count]) => ({ week, count }))
+      .sort((a, b) => a.week - b.week),
+
     debug: { missingCreatedAt },
   };
 }
 
-// ---------------------
-// Route
-// ---------------------
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json().catch(() => ({}));
@@ -280,6 +239,7 @@ export async function POST(req: NextRequest) {
     if (!tenantHint) {
       return NextResponse.json({ ok: false, error: "Falta x-tenant-id." }, { status: 400 });
     }
+
     if (!sessionToken) {
       return NextResponse.json({ ok: false, error: "Falta sessionToken." }, { status: 401 });
     }
@@ -294,46 +254,64 @@ export async function POST(req: NextRequest) {
 
     if (cached && now - cached.ts < ttlSeconds * 1000) {
       const summary = buildRetiradosSummary(cached.assets);
-      return NextResponse.json(
-        {
-          ok: true,
-          ...summary,
-          meta: {
-            cacheHit: true,
-            ttlSeconds,
-            scanned: cached.assets.length,
-            maxScan,
-            pageSize,
-          },
+
+      return NextResponse.json({
+        ok: true,
+        ...summary,
+        meta: {
+          cacheHit: true,
+          ttlSeconds,
+          scanned: cached.assets.length,
+          maxScan,
+          pageSize,
         },
-        { status: 200 }
-      );
+      });
     }
 
-    // ✅ Scan paginado pero filtrando desde origen SOLO retirados
     const assets: RetAsset[] = [];
     let skip = 0;
     let guardSameFirstId = "";
     let scannedRaw = 0;
 
-    const filters = { Location: RETIRED_LOCATION_ID };
+    const filters = {
+      "base:ubicacion": {
+        mode: "contains",
+        value: RETIRED_LOCATION_ID,
+      },
+    };
 
     while (assets.length < maxScan) {
-      const resp = await searchAssetsWithSession(sessionToken, filters, pageSize, skip, authHeader, cacheKey);
-      const itemsRaw: any[] = Array.isArray((resp as any)?.assets) ? (resp as any).assets : [];
+      const resp = await searchAssetsWithSession(
+        sessionToken,
+        filters as any,
+        pageSize,
+        skip,
+        authHeader,
+        cacheKey
+      );
+
+      const itemsRaw: any[] = Array.isArray((resp as any)?.assets)
+        ? (resp as any).assets
+        : [];
+
       if (!itemsRaw.length) break;
 
       scannedRaw += itemsRaw.length;
 
-      const firstId = pickStr(itemsRaw[0]?._id, itemsRaw[0]?.id, itemsRaw[0]?.AssetTag, itemsRaw[0]?.tag);
+      const firstId = pickStr(
+        itemsRaw[0]?._id,
+        itemsRaw[0]?.id,
+        itemsRaw[0]?.AssetTag,
+        itemsRaw[0]?.tag
+      );
+
       if (firstId && firstId === guardSameFirstId) break;
       guardSameFirstId = firstId;
 
       for (const raw of itemsRaw) {
         const mapped = toRetAsset(raw);
 
-        // doble seguro por si algún tenant manda Location diferente
-        if (cleanStr(mapped.location) !== RETIRED_LOCATION_ID) continue;
+        if (norm(mapped.location) !== norm(RETIRED_LOCATION_ID)) continue;
 
         assets.push(mapped);
         if (assets.length >= maxScan) break;
@@ -348,29 +326,29 @@ export async function POST(req: NextRequest) {
 
     const entry: CacheEntry = { ts: Date.now(), assets };
     _retiradosCache.set(cacheKey, entry);
-    __setRetiradosCache(cacheKey, entry);
 
     const summary = buildRetiradosSummary(assets);
 
-    return NextResponse.json(
-      {
-        ok: true,
-        ...summary,
-        meta: {
-          cacheHit: false,
-          ttlSeconds,
-          scanned: assets.length,
-          scannedRaw,
-          truncated: assets.length >= maxScan,
-          maxScan,
-          pageSize,
-        },
+    return NextResponse.json({
+      ok: true,
+      ...summary,
+      meta: {
+        cacheHit: false,
+        ttlSeconds,
+        scanned: assets.length,
+        scannedRaw,
+        truncated: assets.length >= maxScan,
+        maxScan,
+        pageSize,
       },
-      { status: 200 }
-    );
+    });
   } catch (err: any) {
     return NextResponse.json(
-      { ok: false, error: "Error en /api/idlinens/retirados/analysis", details: String(err?.message || err) },
+      {
+        ok: false,
+        error: "Error en /api/idlinens/retirados/analysis",
+        details: String(err?.message || err),
+      },
       { status: 500 }
     );
   }
