@@ -79,7 +79,7 @@ export async function POST(req: Request) {
 
     const url = new URL(`${BASE_URL}/transactions`);
     url.searchParams.set("sessionToken", sessionToken);
-    url.searchParams.set("limit", "5000");
+    url.searchParams.set("limit", "50000");
 
     const resp = await fetch(url.toString(), {
       method: "GET",

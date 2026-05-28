@@ -179,9 +179,9 @@ export default function MovimientosDiariosDashboard({ tenantId }: { tenantId: st
                 >
                   <div>
                     <div className="text-sm font-medium">{fmtDia(r.dia)}</div>
-                    <div className="text-xs text-neutral-500">
-                      in: {r.in} · out: {r.out} · created: {r.created}
-                    </div>
+                   <div className="text-xs text-neutral-500">
+  total <span className="font-medium text-neutral-900">{r.total}</span>
+</div>
                   </div>
 
                   <div className="text-xs text-neutral-500">
