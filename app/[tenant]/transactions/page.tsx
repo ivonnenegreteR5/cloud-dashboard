@@ -48,8 +48,9 @@ export default function TransactionsPage() {
         setLoading(true);
         setError(null);
 
-        const resp = await fetch("/api/cloud/transactions?limit=1000", {
-          headers: {
+const today = new Date().toISOString().slice(0, 10);
+
+const resp = await fetch(`/api/cloud/transactions?limit=5000&dia=${today}`, {          headers: {
             "x-session-token": sToken,
             Authorization: `Bearer ${iToken}`,
             "x-tenant-id": tenantId,
@@ -133,9 +134,21 @@ export default function TransactionsPage() {
     });
   }, [items]);
 
-  const total = rows.length;
-  const totalIn = rows.filter((r) => r.tipo === "Entrada").length;
-  const totalOut = rows.filter((r) => r.tipo === "Salida").length;
+  const rowsDelDia = useMemo(() => {
+  const today = new Date().toISOString().slice(0, 10);
+
+  return rows.filter((r) => {
+    if (!r.fecha || r.fecha === "-") return false;
+    const d = new Date(r.fecha);
+    if (Number.isNaN(d.getTime())) return false;
+    return d.toISOString().slice(0, 10) === today;
+  });
+}, [rows]);
+
+const rowsCortas = rowsDelDia;
+const total = rowsDelDia.length;
+const totalIn = rowsDelDia.filter((r) => r.tipo === "Entrada").length;
+const totalOut = rowsDelDia.filter((r) => r.tipo === "Salida").length;
 
   return (
     <div className="min-h-screen w-full bg-neutral-50 text-neutral-900">
@@ -193,7 +206,7 @@ export default function TransactionsPage() {
         {/* Tabla */}
         <Card>
           <CardHeader>
-            <CardTitle>Transacciones (Entradas / Salidas)</CardTitle>
+            <CardTitle>Transacciones por dia (Entradas / Salidas)</CardTitle>
           </CardHeader>
 
           <CardContent>
@@ -232,8 +245,7 @@ export default function TransactionsPage() {
                   )}
 
                   {!loading &&
-                    rows.map((t, idx) => (
-                      <tr
+rowsCortas.map((t, idx) => (                      <tr
                         key={idx}
                         className={`border-b ${
                           idx % 2 ? "bg-neutral-50" : "bg-white"
