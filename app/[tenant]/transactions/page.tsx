@@ -113,12 +113,21 @@ export default function TransactionsPage() {
           ? Number(t.time)
           : t.raw?.time;
 
-      const fecha =
-        typeof timeVal === "number"
-          ? new Date(
-              (timeVal > 9999999999 ? timeVal * 1000 : timeVal * 1000)
-            ).toLocaleString()
-          : "-";
+     const fecha =
+  typeof timeVal === "number"
+    ? new Intl.DateTimeFormat("es-MX", {
+        timeZone: "America/Mexico_City",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hour12: true,
+      }).format(new Date(
+        timeVal > 9999999999 ? timeVal : timeVal * 1000
+      ))
+    : "-";
 
       return { tipo, ubicacion, epc, empleado, fecha };
     });
