@@ -1,4 +1,5 @@
 // components/idlinens/LavanderiaDashboard.tsx
+// components/idlinens/LavanderiaDashboard.tsx
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
@@ -61,7 +62,6 @@ export function LavanderiaDashboard({ tenantId }: { tenantId: string }) {
   const [tipos, setTipos] = useState<TipoResumen[]>([]);
   const [err, setErr] = useState<string | null>(null);
 
-  // Tabla
   const [selectedTipo, setSelectedTipo] = useState<string>("");
   const [rows, setRows] = useState<DetalleRow[]>([]);
   const [baseRows, setBaseRows] = useState<DetalleRow[]>([]);
@@ -69,11 +69,17 @@ export function LavanderiaDashboard({ tenantId }: { tenantId: string }) {
   const [loadingRows, setLoadingRows] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
 
-  // Promedio días (por tipo)
+  const [pageSize, setPageSize] = useState<number>(10);
+  const [visibleLocalRows, setVisibleLocalRows] = useState<number>(10);
+
   const [avgData, setAvgData] = useState<AvgRow[]>([]);
   const [loadingAvg, setLoadingAvg] = useState(false);
 
-  const canLoadMore = useMemo(() => rows.length < total, [rows.length, total]);
+  const visibleRows = rows.slice(0, visibleLocalRows);
+
+  const canLoadMore = useMemo(() => {
+    return visibleLocalRows < rows.length;
+  }, [visibleLocalRows, rows.length]);
 
   function scrollToTable() {
     requestAnimationFrame(() => {
@@ -81,9 +87,6 @@ export function LavanderiaDashboard({ tenantId }: { tenantId: string }) {
     });
   }
 
-  /* =========================================================
-     1) TIPOS (GRÁFICA DE CONTEO) - CARGA INDEPENDIENTE
-     ========================================================= */
   useEffect(() => {
     let alive = true;
 
@@ -92,7 +95,7 @@ export function LavanderiaDashboard({ tenantId }: { tenantId: string }) {
         setLoadingTipos(true);
         setErr(null);
         setTipos([]);
-        setAvgData([]); // igual que antes: limpia promedio al cambiar tenant
+        setAvgData([]);
 
         const t = await fetchResumenTipos(tenantId, "lavanderia");
         if (!alive) return;
@@ -112,10 +115,6 @@ export function LavanderiaDashboard({ tenantId }: { tenantId: string }) {
     };
   }, [tenantId]);
 
-  /* =========================================================
-     2) PROMEDIO (GRÁFICA DE AVG) - CARGA INDEPENDIENTE
-        Depende de "tipos", pero NO depende de la tabla.
-     ========================================================= */
   useEffect(() => {
     let alive = true;
 
@@ -133,11 +132,13 @@ export function LavanderiaDashboard({ tenantId }: { tenantId: string }) {
               x.tipo,
               300,
               0,
-              tipos // ✅ AQUI: para resolver rawTipo correctamente
+              tipos
             );
+
             const dias = page.rows
               .map((r) => toNum(r.diasLavanderia))
               .filter((n) => n >= 0);
+
             return { tipo: x.tipo, avgDias: avg(dias) };
           })
         );
@@ -164,10 +165,6 @@ export function LavanderiaDashboard({ tenantId }: { tenantId: string }) {
     };
   }, [tipos, tenantId]);
 
-  /* =========================================================
-     3) TABLA (MUESTRA RÁPIDA) - CARGA INDEPENDIENTE
-        Depende de "tipos", pero NO bloquea las gráficas.
-     ========================================================= */
   useEffect(() => {
     let alive = true;
 
@@ -181,19 +178,14 @@ export function LavanderiaDashboard({ tenantId }: { tenantId: string }) {
 
         const pages = await Promise.all(
           seedTipos.map((x) =>
-            fetchDetallePage(
-              tenantId,
-              "lavanderia",
-              x.tipo,
-              40,
-              0,
-              tipos // ✅ AQUI: para resolver rawTipo correctamente
-            ).catch(() => ({
-              rows: [] as DetalleRow[],
-              total: 0,
-              limit: 40,
-              skip: 0,
-            }))
+            fetchDetallePage(tenantId, "lavanderia", x.tipo, 40, 0, tipos).catch(
+              () => ({
+                rows: [] as DetalleRow[],
+                total: 0,
+                limit: 40,
+                skip: 0,
+              })
+            )
           )
         );
 
@@ -209,6 +201,7 @@ export function LavanderiaDashboard({ tenantId }: { tenantId: string }) {
         setRows(merged);
         setTotal(merged.length);
         setSelectedTipo("");
+        setVisibleLocalRows(pageSize);
       } catch (e: any) {
         if (!alive) return;
         setErr(e?.message || "Error cargando tabla");
@@ -225,24 +218,38 @@ export function LavanderiaDashboard({ tenantId }: { tenantId: string }) {
     };
   }, [tipos, tenantId]);
 
-  async function loadTipo(tipo: string) {
+  async function loadTipo(tipo: string, customPageSize = pageSize) {
     setSelectedTipo(tipo);
     setRows([]);
     setTotal(0);
+    setVisibleLocalRows(customPageSize);
     setErr(null);
     setLoadingRows(true);
 
     try {
-      const page = await fetchDetallePage(
+      const firstPage = await fetchDetallePage(
         tenantId,
         "lavanderia",
         tipo,
-        200,
+        customPageSize,
         0,
-        tipos // ✅ AQUI: para resolver rawTipo (BAÑO vs BANO)
+        tipos
       );
-      setRows(page.rows);
-      setTotal(page.total);
+
+      const totalReal = firstPage.total || firstPage.rows.length;
+
+      const allPage = await fetchDetallePage(
+        tenantId,
+        "lavanderia",
+        tipo,
+        totalReal,
+        0,
+        tipos
+      );
+
+      setRows(allPage.rows);
+      setTotal(totalReal);
+      setVisibleLocalRows(customPageSize);
       scrollToTable();
     } catch (e: any) {
       setErr(String(e?.message || e));
@@ -252,19 +259,11 @@ export function LavanderiaDashboard({ tenantId }: { tenantId: string }) {
   }
 
   async function loadMore() {
-    if (loadingMore || !canLoadMore || !selectedTipo) return;
+    if (loadingMore || !canLoadMore) return;
+
     setLoadingMore(true);
     try {
-      const page = await fetchDetallePage(
-        tenantId,
-        "lavanderia",
-        selectedTipo,
-        200,
-        rows.length,
-        tipos // ✅ AQUI: para que el paginado siga consultando con rawTipo correcto
-      );
-      setRows((p) => [...p, ...page.rows]);
-      setTotal(page.total);
+      setVisibleLocalRows((prev) => Math.min(prev + pageSize, rows.length));
     } catch (e: any) {
       setErr(String(e?.message || e));
     } finally {
@@ -272,9 +271,20 @@ export function LavanderiaDashboard({ tenantId }: { tenantId: string }) {
     }
   }
 
+  function handleChangePageSize(value: number) {
+    setPageSize(value);
+    setVisibleLocalRows(value);
+  }
+
+  function quitarFiltro() {
+    setSelectedTipo("");
+    setRows(baseRows);
+    setTotal(baseRows.length);
+    setVisibleLocalRows(pageSize);
+  }
+
   return (
     <div className="space-y-4">
-      {/* Breadcrumb */}
       <div className="flex items-center gap-2 text-sm text-neutral-600">
         <button
           type="button"
@@ -295,19 +305,17 @@ export function LavanderiaDashboard({ tenantId }: { tenantId: string }) {
         </div>
       )}
 
-      {/* ✅ Tabla principal arriba (como tu imagen) */}
-     <div ref={tableRef} className="min-w-0 w-full max-w-full overflow-hidden rounded-lg border bg-white p-4">
+      <div
+        ref={tableRef}
+        className="min-w-0 w-full max-w-full overflow-hidden rounded-lg border bg-white p-4"
+      >
         <div className="mb-2 flex items-center justify-between gap-3">
           <div className="text-base font-semibold">Lista de Blancos en Lavandería</div>
           <div className="flex items-center gap-2">
             {selectedTipo && (
               <button
                 type="button"
-                onClick={() => {
-                  setSelectedTipo("");
-                  setRows(baseRows);
-                  setTotal(baseRows.length);
-                }}
+                onClick={quitarFiltro}
                 className="rounded-md border px-2 py-1 text-sm hover:bg-neutral-50"
               >
                 Quitar filtro
@@ -320,32 +328,40 @@ export function LavanderiaDashboard({ tenantId }: { tenantId: string }) {
           <div className="p-6 text-sm text-neutral-600">Cargando tabla…</div>
         ) : (
           <>
-            <LavanderiaTable rows={rows} />
+            <LavanderiaTable
+              rows={visibleRows}
+              exportRows={rows}
+              totalRows={total || rows.length}
+            />
 
             <div className="mt-3 flex items-center justify-between">
-              <div className="text-xs text-neutral-500">
-                {selectedTipo
-                  ? `${rows.length}${total ? ` / ${total}` : ""}`
-                  : `${rows.length}.  `}
-              </div>
-              {selectedTipo ? (
-                <button
-                  type="button"
-                  onClick={loadMore}
-                  disabled={!canLoadMore || loadingMore}
-                  className="rounded-md border px-3 py-2 text-sm disabled:opacity-50 hover:bg-neutral-50"
+              <div>
+                <select
+                  value={pageSize}
+                  onChange={(e) => handleChangePageSize(Number(e.target.value))}
+                  className="rounded-md border px-2 py-1 text-sm"
                 >
-                  {loadingMore ? "Cargando…" : canLoadMore ? "Cargar más" : "Fin"}
-                </button>
-              ) : null}
+                  <option value={10}>Mostrar de 10 en 10</option>
+                  <option value={50}>Mostrar de 50 en 50</option>
+                  <option value={100}>Mostrar de 100 en 100</option>
+                  <option value={500}>Mostrar de 500 en 500</option>
+                </select>
+              </div>
+
+              <button
+                type="button"
+                onClick={loadMore}
+                disabled={!canLoadMore || loadingMore}
+                className="rounded-md border px-3 py-2 text-sm disabled:opacity-50 hover:bg-neutral-50"
+              >
+                {loadingMore ? "Cargando…" : canLoadMore ? "Cargar más" : "Fin"}
+              </button>
             </div>
           </>
         )}
       </div>
 
-      {/* ✅ Gráficas abajo */}
       <div className={cx("grid grid-cols-1 gap-4 lg:grid-cols-2", "items-start")}>
-        {/* Conteo por tipo */}
         <div className="rounded-lg border bg-white p-4">
           <div className="mb-2 text-base font-semibold">
             Blancos por Categoría en Lavandería
@@ -391,42 +407,40 @@ export function LavanderiaDashboard({ tenantId }: { tenantId: string }) {
           </div>
         </div>
 
-        {/* Promedio de días */}
         <div className="rounded-lg border bg-white p-4">
-          <div className="mb-2 text-base font-semibold">Promedio de Días en Lavandería</div>
+          <div className="mb-2 text-base font-semibold">
+            Promedio de Días en Lavandería
+          </div>
 
           {loadingAvg ? (
             <div className="p-6 text-sm text-neutral-600">Calculando…</div>
           ) : (
             <div className="h-[360px]">
               <ResponsiveContainer width="100%" height="100%">
-           <BarChart
-  data={avgData}
-  margin={{ top: 10, right: 10, left: 10, bottom: 60 }}
->
-  <CartesianGrid strokeDasharray="3 3" />
-  <XAxis
-    dataKey="tipo"
-    interval={0}
-    angle={-45}
-    textAnchor="end"
-    height={70}
-    tick={{ fontSize: 11 }}
-  />
-  <YAxis />
-
-  <Tooltip
-    formatter={(value) => [`${value}`, "Días"]}
-  />
-
-  <Bar dataKey="avgDias" minPointSize={3} />
-</BarChart>
+                <BarChart
+                  data={avgData}
+                  margin={{ top: 10, right: 10, left: 10, bottom: 60 }}
+                >
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis
+                    dataKey="tipo"
+                    interval={0}
+                    angle={-45}
+                    textAnchor="end"
+                    height={70}
+                    tick={{ fontSize: 11 }}
+                  />
+                  <YAxis />
+                  <Tooltip formatter={(value) => [`${value}`, "Días"]} />
+                  <Bar dataKey="avgDias" minPointSize={3} />
+                </BarChart>
               </ResponsiveContainer>
             </div>
           )}
 
           <div className="mt-2 text-xs text-neutral-500">
-            Calculado con los assets que siguen en <span className="font-medium">Status: out</span> (aún no regresan con{" "}
+            Calculado con los assets que siguen en{" "}
+            <span className="font-medium">Status: out</span> (aún no regresan con{" "}
             <span className="font-medium">Status: in</span>).
           </div>
         </div>

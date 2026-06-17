@@ -1,4 +1,5 @@
 // components/idlinens/LavanderiaTable.tsx
+// components/idlinens/LavanderiaTable.tsx
 "use client";
 
 import React, { useMemo, useState } from "react";
@@ -52,7 +53,6 @@ function parseDateMs(value: unknown) {
   const iso = Date.parse(raw);
   if (Number.isFinite(iso)) return iso;
 
-  // Formato MX: 17/4/2026, 5:15:34 p.m.
   const m = raw.match(
     /^(\d{1,2})\/(\d{1,2})\/(\d{4}),?\s+(\d{1,2}):(\d{2})(?::(\d{2}))?\s*([ap])\.?\s*m\.?$/i
   );
@@ -207,16 +207,20 @@ function downloadExcel(rows: DetalleRow[], orderedColumns: ColumnDef[]) {
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
 }
-
 export function LavanderiaTable({
   rows,
+  exportRows,
+  totalRows,
   onRowClick,
 }: {
   rows: DetalleRow[];
+  exportRows?: DetalleRow[];
+  totalRows?: number;
   maxHeight?: number;
   onRowClick?: (row: DetalleRow) => void;
 }) {
   const clickable = typeof onRowClick === "function";
+  const rowsToExport = exportRows ?? rows;
 
   const [columnOrder, setColumnOrder] = useState<ColumnKey[]>(
     columns.map((c) => c.key)
@@ -255,14 +259,14 @@ export function LavanderiaTable({
             Inventario en lavandería
           </h3>
           <p className="text-sm text-neutral-500">
-            {rows.length} registros en la tabla
-          </p>
+  Mostrando {rows.length} de {totalRows ?? rowsToExport.length} registros
+</p>
         </div>
 
         <button
           type="button"
-          onClick={() => downloadExcel(rows, orderedColumns)}
-          disabled={rows.length === 0}
+          onClick={() => downloadExcel(rowsToExport, orderedColumns)}
+          disabled={rowsToExport.length === 0}
           className="inline-flex shrink-0 items-center justify-center gap-2 rounded-lg bg-black px-4 py-2 text-sm font-medium text-white hover:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-50"
         >
           <Download className="h-4 w-4" />
