@@ -99,7 +99,13 @@ function getUbicacionVisual(a: any): string {
 
   return (
     String(
-      a?.Location ??
+      a?.locationName ??
+        a?.raw?.locationName ??
+        a?.LocationName ??
+        a?.raw?.LocationName ??
+        a?.locationLabel ??
+        a?.raw?.locationLabel ??
+        a?.Location ??
         a?.locationId ??
         a?.raw?.Location ??
         a?.raw?.locationId ??
@@ -107,7 +113,6 @@ function getUbicacionVisual(a: any): string {
     ).trim() || "Sin ubicación"
   );
 }
-
 export default function DashboardHome() {
   const router = useRouter();
 

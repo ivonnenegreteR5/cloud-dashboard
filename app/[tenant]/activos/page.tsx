@@ -245,7 +245,13 @@ function resolveEstadoFromAsset(a: any): "nuevos" | null {
 }
 function getUbicacionVisual(a: any): string {
   const loc = String(
-    a?.Location ??
+    a?.locationName ??
+      a?.raw?.locationName ??
+      a?.LocationName ??
+      a?.raw?.LocationName ??
+      a?.locationLabel ??
+      a?.raw?.locationLabel ??
+      a?.Location ??
       a?.locationId ??
       a?.raw?.Location ??
       a?.raw?.locationId ??

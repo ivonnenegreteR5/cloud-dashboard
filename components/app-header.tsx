@@ -170,6 +170,16 @@ export function AppHeader() {
     >
       Administrar activos
     </DropdownMenuItem>
+    <DropdownMenuItem
+  className={
+    isActive(`${base}/contenedores`)
+      ? "bg-neutral-100 font-semibold"
+      : ""
+  }
+  onClick={() => go(`${base}/contenedores`)}
+>
+  Contenedores
+</DropdownMenuItem>
 
     {/* 🔥 IDLINENS – APARTADO ESPECIAL */}
     {showIdLinens && (

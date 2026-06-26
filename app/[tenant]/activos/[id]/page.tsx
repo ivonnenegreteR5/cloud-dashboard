@@ -149,7 +149,18 @@ function pickAssetType(a: ApiAsset | null) {
 }
 
 function pickAssetLocation(a: ApiAsset | null) {
-  return String(a?.Location || a?.locationId || a?.location || "").trim();
+  return String(
+    a?.locationName ||
+      a?.raw?.locationName ||
+      a?.LocationName ||
+      a?.raw?.LocationName ||
+      a?.locationLabel ||
+      a?.raw?.locationLabel ||
+      a?.Location ||
+      a?.locationId ||
+      a?.location ||
+      ""
+  ).trim();
 }
 
 function pickAssetStatusRaw(a: ApiAsset | null) {
@@ -885,7 +896,10 @@ export default function DetalleActivoPage() {
           const empleado = t.byName || t.byEmail || "—";
           const fecha = safeDateTimeFromSeconds(t.time);
           const etiqueta = t.assetCode || displayEpc || "—";
-          const ubicacion = resolveLocationLabel(t.locationId);
+    const ubicacion =
+  t.locationName ||
+  t.raw?.locationName ||
+  resolveLocationLabel(t.locationId);
           const nombreActivo = t.assetType || displayNombreActivo || "—";
           const notas = (t.notes || "").toString().trim();
 

@@ -701,7 +701,17 @@ function toId(a: RawAsset) {
 }
 
 function toUbicacion(a: RawAsset) {
-  return toStr(a.Location) || toStr(a.location) || toStr(a.ubicacion) || "";
+  return (
+    toStr((a as any).locationName) ||
+    toStr((a as any).raw?.locationName) ||
+    toStr((a as any).LocationName) ||
+    toStr((a as any).raw?.LocationName) ||
+    toStr(a.ubicacion) ||
+    toStr(a.Location) ||
+    toStr(a.location) ||
+    toStr((a as any).locationId) ||
+    ""
+  );
 }
 
 function toStatus(a: RawAsset) {
@@ -1625,9 +1635,32 @@ const rows: Inactivos15DetalleRow[] = baseRows.map((r, i) => {
     tipo: a?.tipo ?? a?.AssetType ?? a?.assetType ?? rr?.tipo,
     AssetType: a?.AssetType ?? a?.assetType ?? a?.tipo ?? rr?.tipo,
 
-    ubicacion: a?.ubicacion ?? a?.Location ?? a?.location ?? a?.locationId ?? rr?.ubicacion,
-    location: a?.location ?? a?.Location ?? a?.ubicacion ?? a?.locationId ?? rr?.location,
-    Location: a?.Location ?? a?.ubicacion ?? a?.location ?? a?.locationId ?? rr?.Location,
+    ubicacion:
+  a?.locationName ??
+  a?.raw?.locationName ??
+  a?.ubicacion ??
+  a?.Location ??
+  a?.location ??
+  a?.locationId ??
+  rr?.ubicacion,
+
+location:
+  a?.locationName ??
+  a?.raw?.locationName ??
+  a?.location ??
+  a?.Location ??
+  a?.ubicacion ??
+  a?.locationId ??
+  rr?.location,
+
+Location:
+  a?.locationName ??
+  a?.raw?.locationName ??
+  a?.Location ??
+  a?.ubicacion ??
+  a?.location ??
+  a?.locationId ??
+  rr?.Location,
 
     estado: a?.estado ?? a?.status ?? a?.Status ?? rr?.estado,
     status: a?.status ?? a?.Status ?? a?.estado ?? rr?.status,

@@ -1,3 +1,5 @@
+//app/[tenant]/transactions/page.tsx
+// app/[tenant]/transactions/page.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
@@ -13,7 +15,8 @@ interface CloudTransaction {
   id?: string;
   assetId?: string;
   locationId?: string;
-  mode?: string; // "in" | "out"
+  locationName?: string;
+  mode?: string;
   time?: number | string;
   byUid?: string;
   byEmail?: string;
@@ -26,6 +29,63 @@ interface CloudTransaction {
   [key: string]: any;
 }
 
+function getTodayMxYmd() {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Mexico_City",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+}
+
+function getYmdMxFromTime(timeVal: any) {
+  const n = Number(timeVal);
+  if (!Number.isFinite(n) || n <= 0) return "";
+
+  const date = new Date(n > 9999999999 ? n : n * 1000);
+
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Mexico_City",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(date);
+}
+
+function formatFechaMx(timeVal: any) {
+  const n = Number(timeVal);
+  if (!Number.isFinite(n) || n <= 0) return "-";
+
+  return new Intl.DateTimeFormat("es-MX", {
+    timeZone: "America/Mexico_City",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: true,
+  }).format(new Date(n > 9999999999 ? n : n * 1000));
+}
+
+function normalizeMode(mode: any) {
+  const m = String(mode || "").toLowerCase().trim();
+
+  if (["in", "entrada", "checkin", "check_in", "checked in"].includes(m)) {
+    return "Entrada";
+  }
+
+  if (["out", "salida", "checkout", "check_out", "checked out"].includes(m)) {
+    return "Salida";
+  }
+
+  if (["created", "creado", "nuevo"].includes(m)) {
+    return "Creado";
+  }
+
+  return mode || "N/A";
+}
+
 export default function TransactionsPage() {
   const tenantId = useTenant();
   const router = useRouter();
@@ -33,6 +93,11 @@ export default function TransactionsPage() {
   const [items, setItems] = useState<CloudTransaction[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  const [page, setPage] = useState(1);
+const [pageSize, setPageSize] = useState(25);
+
+  const todayMx = useMemo(() => getTodayMxYmd(), []);
 
   useEffect(() => {
     const sToken = localStorage.getItem("cloudSessionToken");
@@ -48,14 +113,16 @@ export default function TransactionsPage() {
         setLoading(true);
         setError(null);
 
-const today = new Date().toISOString().slice(0, 10);
-
-const resp = await fetch(`/api/cloud/transactions?limit=5000&dia=${today}`, {          headers: {
-            "x-session-token": sToken,
-            Authorization: `Bearer ${iToken}`,
-            "x-tenant-id": tenantId,
-          },
-        });
+        const resp = await fetch(
+          `/api/cloud/transactions?limit=5000&dia=${todayMx}`,
+          {
+            headers: {
+              "x-session-token": sToken,
+              Authorization: `Bearer ${iToken}`,
+              "x-tenant-id": tenantId,
+            },
+          }
+        );
 
         const data = await resp.json();
 
@@ -73,106 +140,98 @@ const resp = await fetch(`/api/cloud/transactions?limit=5000&dia=${today}`, {   
     };
 
     fetchTx();
-  }, [router, tenantId]);
-
-  const rows = useMemo(() => {
-    return (items || []).map((t) => {
-      const modeRaw =
-        (t.mode || t.raw?.mode || "").toString().toLowerCase();
-
-      const tipo =
-        modeRaw === "in"
-          ? "Entrada"
-          : modeRaw === "out"
-          ? "Salida"
-          : t.mode || "N/A";
-
-      const ubicacion =
-        t.locationId ||
-        t.raw?.location_id ||
-        t.personnelLocation ||
-        t.raw?.personnelLocation ||
-        "-";
-
-      const epc =
-        t.assetCode ||
-        t.raw?.assetCode ||
-        t.raw?.AssetTag ||
-        "-";
-
-      const empleado =
-        t.personnelName ||
-        t.byName ||
-        t.raw?.personnelName ||
-        t.raw?.by_name ||
-        "-";
-
-      const timeVal =
-        typeof t.time === "number"
-          ? t.time
-          : t.time
-          ? Number(t.time)
-          : t.raw?.time;
-
-     const fecha =
-  typeof timeVal === "number"
-    ? new Intl.DateTimeFormat("es-MX", {
-        timeZone: "America/Mexico_City",
-        year: "numeric",
-        month: "2-digit",
-        day: "2-digit",
-        hour: "2-digit",
-        minute: "2-digit",
-        second: "2-digit",
-        hour12: true,
-      }).format(new Date(
-        timeVal > 9999999999 ? timeVal : timeVal * 1000
-      ))
-    : "-";
-
-      return { tipo, ubicacion, epc, empleado, fecha };
-    });
-  }, [items]);
+  }, [router, tenantId, todayMx]);
 
   const rowsDelDia = useMemo(() => {
-  const today = new Date().toISOString().slice(0, 10);
+    return (items || [])
+      .filter((t) => {
+        const timeVal =
+          typeof t.time === "number"
+            ? t.time
+            : t.time
+            ? Number(t.time)
+            : t.raw?.time;
 
-  return rows.filter((r) => {
-    if (!r.fecha || r.fecha === "-") return false;
-    const d = new Date(r.fecha);
-    if (Number.isNaN(d.getTime())) return false;
-    return d.toISOString().slice(0, 10) === today;
-  });
-}, [rows]);
+        return getYmdMxFromTime(timeVal) === todayMx;
+      })
+      .map((t) => {
+        const modeRaw = t.mode || t.raw?.mode || "";
+        const tipo = normalizeMode(modeRaw);
 
-const rowsCortas = rowsDelDia;
-const total = rowsDelDia.length;
+        const ubicacion =
+          t.locationName ||
+          t.raw?.locationName ||
+          t.raw?.location_name ||
+          t.locationId ||
+          t.raw?.locationId ||
+          t.raw?.location_id ||
+          t.raw?.Location ||
+          t.personnelLocation ||
+          t.raw?.personnelLocation ||
+          "-";
+
+        const epc =
+          t.assetCode ||
+          t.raw?.assetCode ||
+          t.raw?.AssetTag ||
+          t.raw?.assetTag ||
+          t.raw?.tag ||
+          t.assetId ||
+          "-";
+
+        const empleado =
+          t.personnelName ||
+          t.byName ||
+          t.byEmail ||
+          t.raw?.personnelName ||
+          t.raw?.by_name ||
+          t.raw?.by_email ||
+          t.raw?.by ||
+          "-";
+
+        const timeVal =
+          typeof t.time === "number"
+            ? t.time
+            : t.time
+            ? Number(t.time)
+            : t.raw?.time;
+
+        const fecha = formatFechaMx(timeVal);
+
+        return { tipo, ubicacion, epc, empleado, fecha };
+      });
+  }, [items, todayMx]);
+
+  const rowsCortas = rowsDelDia;
+  const total = rowsDelDia.length;
 const totalIn = rowsDelDia.filter((r) => r.tipo === "Entrada").length;
 const totalOut = rowsDelDia.filter((r) => r.tipo === "Salida").length;
+
+const totalPages = Math.max(1, Math.ceil(rowsDelDia.length / pageSize));
+
+const currentRows = rowsDelDia.slice(
+  (page - 1) * pageSize,
+  page * pageSize
+);
 
   return (
     <div className="min-h-screen w-full bg-neutral-50 text-neutral-900">
       <AppHeader />
 
       <div className="mx-auto max-w-7xl px-4 py-6 space-y-6">
-        {/* Botón regresar */}
         <div>
           <Button asChild variant="outline" className="px-5 py-2">
-            <Link href={`/${tenantId}`}>
-              ← Regresar a pantalla principal
-            </Link>
+            <Link href={`/${tenantId}`}>← Regresar a pantalla principal</Link>
           </Button>
         </div>
 
-        {/* Título */}
         <h2 className="text-lg font-semibold">Transacciones</h2>
 
-        {/* Summary */}
         <div className="grid gap-4 sm:grid-cols-3">
           <Card>
             <CardContent className="py-4">
               <div className="text-xs font-semibold uppercase text-neutral-500">
-                TOTAL TRANSACCIONES
+                TOTAL TRANSACCIONES DEL DÍA
               </div>
               <div className="mt-2 text-3xl font-bold">
                 {loading ? "…" : total}
@@ -183,7 +242,7 @@ const totalOut = rowsDelDia.filter((r) => r.tipo === "Salida").length;
           <Card>
             <CardContent className="py-4">
               <div className="text-xs font-semibold uppercase text-neutral-500">
-                ENTRADAS (check in)
+                ENTRADAS DEL DÍA
               </div>
               <div className="mt-2 text-3xl font-bold">
                 {loading ? "…" : totalIn}
@@ -194,7 +253,7 @@ const totalOut = rowsDelDia.filter((r) => r.tipo === "Salida").length;
           <Card>
             <CardContent className="py-4">
               <div className="text-xs font-semibold uppercase text-neutral-500">
-                SALIDAS (check out)
+                SALIDAS DEL DÍA
               </div>
               <div className="mt-2 text-3xl font-bold">
                 {loading ? "…" : totalOut}
@@ -203,10 +262,9 @@ const totalOut = rowsDelDia.filter((r) => r.tipo === "Salida").length;
           </Card>
         </div>
 
-        {/* Tabla */}
         <Card>
           <CardHeader>
-            <CardTitle>Transacciones por dia (Entradas / Salidas)</CardTitle>
+            <CardTitle>Transacciones por día</CardTitle>
           </CardHeader>
 
           <CardContent>
@@ -216,17 +274,22 @@ const totalOut = rowsDelDia.filter((r) => r.tipo === "Salida").length;
               </div>
             )}
 
+            <div className="mb-3 text-xs text-neutral-500">
+              Mostrando movimientos del día: {todayMx}
+            </div>
+
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b bg-neutral-100 text-left text-xs uppercase tracking-wide text-neutral-600">
                     <th className="py-2 pr-4">Tipo</th>
                     <th className="py-2 pr-4">Ubicación</th>
-                    <th className="py-2 pr-4">Etiqueta </th>
+                    <th className="py-2 pr-4">Etiqueta</th>
                     <th className="py-2 pr-4">Empleado</th>
                     <th className="py-2 pr-4">Fecha</th>
                   </tr>
                 </thead>
+
                 <tbody>
                   {loading && (
                     <tr>
@@ -236,16 +299,17 @@ const totalOut = rowsDelDia.filter((r) => r.tipo === "Salida").length;
                     </tr>
                   )}
 
-                  {!loading && rows.length === 0 && !error && (
+                  {!loading && rowsCortas.length === 0 && !error && (
                     <tr>
                       <td colSpan={5} className="py-6 text-center">
-                        No hay transacciones registradas.
+                        No hay transacciones registradas hoy.
                       </td>
                     </tr>
                   )}
 
                   {!loading &&
-rowsCortas.map((t, idx) => (                      <tr
+                    currentRows.map((t, idx) => (
+                      <tr
                         key={idx}
                         className={`border-b ${
                           idx % 2 ? "bg-neutral-50" : "bg-white"
@@ -260,13 +324,17 @@ rowsCortas.map((t, idx) => (                      <tr
                             {t.tipo}
                           </Badge>
                         </td>
+
                         <td className="py-2 pr-4 align-top">{t.ubicacion}</td>
+
                         <td className="py-2 pr-4 align-top font-mono text-xs">
                           {t.epc}
                         </td>
+
                         <td className="py-2 pr-4 align-top text-xs">
                           {t.empleado}
                         </td>
+
                         <td className="py-2 pr-4 align-top text-xs">
                           {t.fecha}
                         </td>
@@ -275,6 +343,62 @@ rowsCortas.map((t, idx) => (                      <tr
                 </tbody>
               </table>
             </div>
+            <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+
+  <div className="flex items-center gap-2 text-sm">
+    <span>Mostrar</span>
+
+    <select
+      className="rounded border px-2 py-1"
+      value={pageSize}
+      onChange={(e) => {
+        setPageSize(Number(e.target.value));
+        setPage(1);
+      }}
+    >
+      <option value={10}>10</option>
+      <option value={25}>25</option>
+      <option value={50}>50</option>
+      <option value={100}>100</option>
+    </select>
+
+    <span>registros</span>
+  </div>
+
+  <div className="text-sm text-neutral-600">
+    {rowsDelDia.length === 0
+      ? "0 de 0"
+      : `${(page - 1) * pageSize + 1} - ${Math.min(
+          page * pageSize,
+          rowsDelDia.length
+        )} de ${rowsDelDia.length}`}
+  </div>
+
+  <div className="flex gap-2">
+
+    <Button
+      variant="outline"
+      disabled={page === 1}
+      onClick={() => setPage((p) => p - 1)}
+    >
+      ← Anterior
+    </Button>
+
+    <div className="flex items-center px-3 text-sm">
+      Página {page} de {totalPages}
+    </div>
+
+    <Button
+      variant="outline"
+      disabled={page >= totalPages}
+      onClick={() => setPage((p) => p + 1)}
+    >
+      Siguiente →
+    </Button>
+
+  </div>
+
+</div>
           </CardContent>
         </Card>
 
