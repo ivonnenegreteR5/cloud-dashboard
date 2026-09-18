@@ -8,6 +8,9 @@ const BASE_URL =
 
 const API_KEY = process.env.CLOUD_API_API_KEY || process.env.CLOUD_API_KEY || "";
 
+const DASHBOARD_CHECK_VERSION =
+  process.env.DASHBOARD_CHECK_VERSION || "1.3";
+
 async function readBodySmart(resp: Response) {
   const text = await resp.text().catch(() => "");
   if (!text) return { json: null as any, text: "" };
@@ -112,13 +115,15 @@ export async function POST(req: Request) {
     };
     if (authHeader) cloudHeaders["authorization"] = authHeader;
 
-    const cloudBody: any = {
-      auth: { token: sessionToken },
-      location_id: locationId, // ✅ requerido
-      updates, // ✅ requerido
-      ...(personnelId ? { personnelId } : {}),
-    };
+const cloudBody: any = {
+  auth: { token: sessionToken },
+  location_id: locationId,
+  updates,
+  ...(personnelId ? { personnelId } : {}),
 
+  appVersion: DASHBOARD_CHECK_VERSION,
+  deviceId: "dashboard",
+};
     // En tu server existen /api/v1/:tenantId/Check y /api/:tenantId/Check
     const candidates = [
       `${BASE_URL}/api/v1/${encodeURIComponent(tenantId)}/Check`,
