@@ -40,6 +40,14 @@ function pickStr(...vals: any[]) {
   }
   return "";
 }
+
+function norm(v: unknown) {
+  return cleanStr(v)
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+}
+
 function parseDateToMs(v: any): number | null {
   if (v === null || v === undefined || v === "") return null;
 
@@ -188,7 +196,12 @@ async function ensureRetCache(params: {
   let guardSameFirstId = "";
   let scannedRaw = 0;
 
-  const filters = { Location: RETIRED_LOCATION_ID };
+const filters = {
+  "base:ubicacion": {
+    mode: "contains",
+    value: RETIRED_LOCATION_ID,
+  },
+};
 
   while (assets.length < maxScan) {
     const resp = await searchAssetsWithSession(
@@ -216,7 +229,7 @@ async function ensureRetCache(params: {
 
     for (const raw of itemsRaw) {
       const mapped = toRetAsset(raw);
-      if (cleanStr(mapped.location) !== RETIRED_LOCATION_ID) continue;
+     if (norm(mapped.location) !== norm(RETIRED_LOCATION_ID)) continue;
       assets.push(mapped);
       if (assets.length >= maxScan) break;
     }
@@ -276,7 +289,8 @@ export async function POST(req: NextRequest) {
     // 1) tipo => lista
     if (mode === "tipo") {
       if (!tipo) return NextResponse.json({ ok: false, error: "Falta tipo." }, { status: 400 });
-      const filtered = entry.assets.filter((a) => cleanStr(a.tipo) === tipo);
+      const tipoNorm = norm(tipo);
+      const filtered = entry.assets.filter((a) => norm(a.tipo) === tipoNorm);
       const total = filtered.length;
       const page = filtered.slice(skip, skip + limit);
       return NextResponse.json(
@@ -320,7 +334,10 @@ export async function POST(req: NextRequest) {
       }
       if (!tipo) return NextResponse.json({ ok: false, error: "Falta tipo." }, { status: 400 });
 
-      const filtered = entry.assets.filter((a) => cleanStr(a.tipo) === tipo && assetWeek(a) === week);
+      const tipoNorm = norm(tipo);
+      const filtered = entry.assets.filter(
+        (a) => norm(a.tipo) === tipoNorm && assetWeek(a) === week
+      );
       const total = filtered.length;
       const page = filtered.slice(skip, skip + limit);
 
@@ -334,7 +351,8 @@ export async function POST(req: NextRequest) {
     if (mode === "cyclesTipo") {
       if (!tipo) return NextResponse.json({ ok: false, error: "Falta tipo." }, { status: 400 });
 
-      const filtered = entry.assets.filter((a) => cleanStr(a.tipo) === tipo);
+      const tipoNorm = norm(tipo);
+      const filtered = entry.assets.filter((a) => norm(a.tipo) === tipoNorm);
       filtered.sort((a, b) => (Number(b.ciclosLavado) || 0) - (Number(a.ciclosLavado) || 0));
 
       const total = filtered.length;

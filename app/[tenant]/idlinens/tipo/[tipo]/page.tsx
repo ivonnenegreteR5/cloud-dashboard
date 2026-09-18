@@ -196,12 +196,8 @@ export default function IdLinensTipoPage() {
         </div>
       ) : (
         <>
-          <DetalleTable
-            rows={rows}
-            onDownloadAll={descargarExcelCompleto}
-          />
-
-          <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+          {/* Acciones arriba de la tabla */}
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
             <div className="text-xs text-neutral-500">
               Esta tabla es exclusiva de la gráfica de barras.
             </div>
@@ -224,10 +220,20 @@ export default function IdLinensTipoPage() {
                 disabled={!canLoadMore || loadingMore}
                 className="rounded-md border px-3 py-2 text-sm hover:bg-neutral-50 disabled:opacity-50"
               >
-                {loadingMore ? "Cargando…" : canLoadMore ? "Cargar más" : "Fin"}
+                {loadingMore
+                  ? "Cargando…"
+                  : canLoadMore
+                    ? "Cargar más"
+                    : "Fin"}
               </button>
             </div>
           </div>
+
+          {/* Tabla */}
+          <DetalleTable
+            rows={rows}
+            onDownloadAll={descargarExcelCompleto}
+          />
         </>
       )}
     </IdLinensShell>

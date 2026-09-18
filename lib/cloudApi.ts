@@ -409,7 +409,13 @@ export async function listAssetsWithSession(
  */
 export async function searchAssetsWithSession(
   sessionToken: string,
-  filters: Record<string, string>,
+filters: Record<
+  string,
+  string | {
+    mode: string;
+    value: string;
+  }
+>,
   limit = 100,
   skip = 0,
   authHeader?: string,

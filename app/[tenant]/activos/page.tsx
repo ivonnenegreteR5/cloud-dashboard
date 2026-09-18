@@ -728,14 +728,7 @@ export default function AdministrarActivosPage() {
   ]);
 
   const EXTRA_EDITABLE_CUSTOM_FIELDS: AssetCustomFieldDef[] = useMemo(() => {
-    return [
-      {
-        key: "ciclosLavado",
-        label: "Ciclos de lavado",
-        type: "number",
-        readOnly: false,
-      },
-    ];
+  return [];
   }, []);
 
   const customFieldsForForms: AssetCustomFieldDef[] = useMemo(() => {
@@ -832,7 +825,8 @@ export default function AdministrarActivosPage() {
       for (const k of Object.keys(c)) {
         const key = String(k || "").trim();
         if (!key) continue;
-        if (key === "lastCicloAt") continue;
+    if (key === "lastCicloAt") continue;
+if (key === "ciclosLavado") continue;
 
         if (!map.has(key)) {
           map.set(key, { key, label: key });
